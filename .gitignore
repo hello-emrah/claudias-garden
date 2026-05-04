@@ -1,0 +1,16 @@
+node_modules/
+*.log
+.DS_Store
+
+# Plugin build artefacts and local user state
+plugin/main.js
+plugin/data.json
+
+# Dev vault: Obsidian writes per-machine config and workspace state here
+dev-vault/.obsidian/workspace*
+dev-vault/.obsidian/cache
+dev-vault/.obsidian/community-plugins.json
+dev-vault/.obsidian/plugins/
+
+# Claude CLI session store, if it ever leaks into the tree
+.claude/projects/
