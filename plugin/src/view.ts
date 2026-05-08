@@ -644,6 +644,30 @@ export class ClaudeForObsidianView extends ItemView {
         });
       });
     });
+
+    const tags = el.querySelectorAll("a.tag");
+    tags.forEach((node) => {
+      const a = node as HTMLAnchorElement;
+      if (a.dataset.cfoBound === "1") return;
+      a.dataset.cfoBound = "1";
+      const raw = a.getAttr("href") || a.textContent || "";
+      const tagName = raw.replace(/^#/, "");
+      a.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        this.openTagSearch(tagName);
+      });
+    });
+  }
+
+  private openTagSearch(tagName: string): void {
+    const search: any = (this.app as any).internalPlugins?.getPluginById?.("global-search");
+    const instance = search?.instance;
+    if (instance?.openGlobalSearch) {
+      instance.openGlobalSearch(`tag:#${tagName}`);
+      return;
+    }
+    new Notice(`Tag: #${tagName}`);
   }
 
   private appendToolUse(name: string, input: any): void {

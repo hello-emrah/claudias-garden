@@ -222,10 +222,28 @@
 .cfo-message-body blockquote {
   margin: 0.8em 0;
   padding: 0.4em 0.8em;
+  border-left: 3px solid var(--quote-opening-modifier, var(--background-modifier-border));
+  color: var(--text-muted);
+}
+
+.cfo-message-body blockquote > :first-child {
+  margin-top: 0;
+}
+
+.cfo-message-body blockquote > :last-child {
+  margin-bottom: 0;
 }
 
 .cfo-message-tool {
   margin: 0.8em 0;
+}
+
+/* Tool calls live at the top level of .cfo-output, sibling to
+   .cfo-message blocks. Give them extra space when they follow
+   a Claude message (the typical case after a speaker heading). */
+.cfo-message-assistant + .cfo-message-tool,
+.cfo-message-tool + .cfo-message-tool {
+  margin-top: 1em;
 }
 
 /* Generous breathing room between top-level blocks. Headings
