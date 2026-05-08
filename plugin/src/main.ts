@@ -30,6 +30,12 @@ export default class ClaudeForObsidianPlugin extends Plugin {
       callback: () => this.withView((v) => v.deleteCurrentChat()),
     });
 
+    this.addCommand({
+      id: "claude-for-obsidian-save-chat",
+      name: "Save chat to vault",
+      callback: () => this.withView((v) => v.saveChatToVault()),
+    });
+
     this.addSettingTab(new ClaudeForObsidianSettingTab(this.app, this));
   }
 

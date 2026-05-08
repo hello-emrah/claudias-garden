@@ -1,8 +1,9 @@
-import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, Menu } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, Menu, TFile, normalizePath } from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { ClaudeRun, StreamEvent } from "./claude-client";
+import { exportSession } from "./chat-export";
 import type ClaudeForObsidianPlugin from "./main";
 
 interface SessionSummary {
@@ -70,6 +71,9 @@ export class ClaudeForObsidianView extends ItemView {
     const deleteBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "🗑" });
     deleteBtn.title = "Delete current chat";
     deleteBtn.onclick = () => this.deleteCurrentChat();
+    const saveBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "⬇" });
+    saveBtn.title = "Save chat to vault";
+    saveBtn.onclick = () => this.saveChatToVault();
 
     this.outputEl = root.createDiv({ cls: "cfo-output" });
     this.statusEl = root.createDiv({ cls: "cfo-status", text: "Idle." });
@@ -338,6 +342,59 @@ export class ClaudeForObsidianView extends ItemView {
     }
     this.newChat();
     this.statusEl.setText(`Deleted chat ${id}. New chat ready.`);
+  }
+
+  async saveChatToVault(): Promise<void> {
+    if (this.currentRun) {
+      new Notice("Cannot save chat while a run is in progress.");
+      return;
+    }
+    const id = this.activeSessionId;
+    if (!id) {
+      new Notice("No active chat to save.");
+      return;
+    }
+    const filePath = this.findSessionFile(id);
+    if (!filePath) {
+      new Notice("Could not locate session file on disk.");
+      return;
+    }
+    const exported = exportSession({
+      jsonlPath: filePath,
+      cwd: this.resolveCwd(),
+      vaultName: this.vaultName(),
+    });
+    if (!exported) {
+      new Notice("Could not parse session jsonl.");
+      return;
+    }
+    const folder = this.newFileFolder();
+    const targetPath = normalizePath(folder ? `${folder}/${exported.filename}` : exported.filename);
+    try {
+      const existing = this.app.vault.getAbstractFileByPath(targetPath);
+      let file: TFile;
+      if (existing instanceof TFile) {
+        await this.app.vault.modify(existing, exported.body);
+        file = existing;
+      } else {
+        file = await this.app.vault.create(targetPath, exported.body);
+      }
+      const leaf = this.app.workspace.getLeaf(false);
+      await leaf.openFile(file);
+      new Notice(`Saved chat to ${targetPath}`);
+    } catch (e: any) {
+      new Notice(`Save failed: ${e.message}`);
+    }
+  }
+
+  private newFileFolder(): string {
+    const cfg: any = (this.app.vault as any).getConfig?.bind(this.app.vault);
+    if (!cfg) return "";
+    const loc = cfg("newFileLocation");
+    if (loc === "root" || !loc) return "";
+    const folder = cfg("newFileFolderPath");
+    if (typeof folder === "string" && folder.trim()) return folder.trim();
+    return "";
   }
 
   private findSessionFile(id: string): string | null {
