@@ -185,9 +185,10 @@
   margin-bottom: 0;
 }
 
-/* Modest spacing throughout message bodies. The renderer's own
-   defaults are mostly fine now that pre-wrap is gone; we only nudge
-   a few things and otherwise let block flow govern. */
+/* Modest spacing throughout message bodies. Block flow governs
+   internal sizing; we add a sibling rule below to give each top-level
+   block a generous gap from the next, so reading a long response
+   feels sectioned without padding lines. */
 .cfo-message-body p {
   margin: 0.6em 0;
   line-height: 1.5;
@@ -199,13 +200,13 @@
 .cfo-message-body h4,
 .cfo-message-body h5,
 .cfo-message-body h6 {
-  margin: 1em 0 0.4em 0;
+  margin: 1.4em 0 0.5em 0;
   line-height: 1.25;
 }
 
 .cfo-message-body ul,
 .cfo-message-body ol {
-  margin: 0.5em 0;
+  margin: 0.6em 0;
   padding-left: 1.4em;
 }
 
@@ -219,12 +220,18 @@
 }
 
 .cfo-message-body blockquote {
-  margin: 0.6em 0;
+  margin: 0.8em 0;
   padding: 0.4em 0.8em;
 }
 
 .cfo-message-tool {
-  margin: 0.6em 0;
+  margin: 0.8em 0;
+}
+
+/* Generous breathing room between top-level blocks. Headings
+   already provide their own gap above, so skip them in this rule. */
+.cfo-message-body > * + *:not(h1):not(h2):not(h3):not(h4):not(h5):not(h6) {
+  margin-top: 1em;
 }
 
 .cfo-message-body pre {
