@@ -130,57 +130,70 @@ export class ClaudeForObsidianView extends ItemView {
 
   private refreshCwdBanner(): void {
     if (!this.cwdBannerEl) return;
-    this.cwdBannerEl.setText(`vault: ${this.vaultName()}  ·  ${this.resolveCwd()}`);
+    this.cwdBannerEl.setText(this.vaultName());
   }
 
-  private cliProjectDir(): string {
-    const cwd = this.resolveCwd();
-    const encoded = cwd.replace(/\//g, "-");
-    return path.join(os.homedir(), ".claude", "projects", encoded);
+  private projectsRoot(): string {
+    return path.join(os.homedir(), ".claude", "projects");
   }
 
   private listSessions(): SessionSummary[] {
-    const dir = this.cliProjectDir();
-    let entries: string[];
+    const root = this.projectsRoot();
+    const cwd = this.resolveCwd();
+    let projectDirs: string[];
     try {
-      entries = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+      projectDirs = fs.readdirSync(root);
     } catch {
       return [];
     }
     const summaries: SessionSummary[] = [];
-    for (const file of entries) {
-      const fullPath = path.join(dir, file);
-      const id = file.replace(/\.jsonl$/, "");
-      let label = "(empty)";
-      let stat: fs.Stats;
+    for (const projectDir of projectDirs) {
+      const dirPath = path.join(root, projectDir);
+      let files: string[];
       try {
-        stat = fs.statSync(fullPath);
+        files = fs.readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
       } catch {
         continue;
       }
-      try {
-        const head = fs.readFileSync(fullPath, "utf8").split("\n").slice(0, 50);
-        for (const line of head) {
-          if (!line.trim()) continue;
-          try {
-            const evt = JSON.parse(line);
-            if (evt.type === "user" && typeof evt.message?.content === "string") {
-              label = evt.message.content;
-              break;
-            }
-            if (evt.type === "queue-operation" && typeof evt.content === "string") {
-              label = evt.content;
-              break;
-            }
-          } catch {
-            // skip malformed line
-          }
+      for (const file of files) {
+        const fullPath = path.join(dirPath, file);
+        const id = file.replace(/\.jsonl$/, "");
+        let label = "(empty)";
+        let belongsToCwd = false;
+        let stat: fs.Stats;
+        try {
+          stat = fs.statSync(fullPath);
+        } catch {
+          continue;
         }
-      } catch {
-        // unreadable file; keep default label
+        try {
+          const head = fs.readFileSync(fullPath, "utf8").split("\n").slice(0, 50);
+          for (const line of head) {
+            if (!line.trim()) continue;
+            try {
+              const evt = JSON.parse(line);
+              if (typeof evt.cwd === "string" && evt.cwd === cwd) {
+                belongsToCwd = true;
+              }
+              if (label === "(empty)") {
+                if (evt.type === "user" && typeof evt.message?.content === "string") {
+                  label = evt.message.content;
+                } else if (evt.type === "queue-operation" && typeof evt.content === "string") {
+                  label = evt.content;
+                }
+              }
+              if (belongsToCwd && label !== "(empty)") break;
+            } catch {
+              // skip malformed line
+            }
+          }
+        } catch {
+          // unreadable file; skip
+        }
+        if (!belongsToCwd) continue;
+        const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
+        summaries.push({ id, label: truncated, timestamp: stat.mtimeMs });
       }
-      const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
-      summaries.push({ id, label: truncated, timestamp: stat.mtimeMs });
     }
     summaries.sort((a, b) => b.timestamp - a.timestamp);
     return summaries;
