@@ -235,14 +235,13 @@
 }
 
 .cfo-message-tool {
-  margin: 0.8em 0;
+  margin: 4px 0;
 }
 
-/* Tool calls live at the top level of .cfo-output, sibling to
-   .cfo-message blocks. Give them extra space when they follow
-   a Claude message (the typical case after a speaker heading). */
-.cfo-message-assistant + .cfo-message-tool,
-.cfo-message-tool + .cfo-message-tool {
+/* Gap when prose returns after a tool call. Tool-to-tool stays
+   tight; speaker-to-tool stays tight; only tool-to-message gets
+   breathing room. */
+.cfo-message-tool + .cfo-message-assistant {
   margin-top: 1em;
 }
 
