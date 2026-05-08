@@ -12,7 +12,6 @@
   overflow-y: auto;
   font-family: var(--font-text);
   font-size: var(--font-ui-small);
-  white-space: pre-wrap;
   word-break: break-word;
   padding: 8px 8px 80px 8px;
   background: transparent;
