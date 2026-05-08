@@ -6,6 +6,7 @@ export interface ClaudeForObsidianSettings {
   model: string;
   permissionMode: "acceptEdits" | "default" | "plan" | "bypassPermissions";
   activeSessionId: string | null;
+  sessionLabels: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
@@ -13,6 +14,7 @@ export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
   model: "",
   permissionMode: "acceptEdits",
   activeSessionId: null,
+  sessionLabels: {},
 };
 
 export class ClaudeForObsidianSettingTab extends PluginSettingTab {

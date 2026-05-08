@@ -254,3 +254,148 @@
   color: var(--text-muted);
   padding: 2px 6px;
 }
+
+/* History popup */
+.cfo-history-popup {
+  position: fixed;
+  z-index: 1000;
+  width: 360px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.cfo-history-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.cfo-history-search-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.cfo-history-search-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.cfo-history-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  padding: 2px 0;
+}
+
+.cfo-history-search-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.cfo-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.cfo-history-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.cfo-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: var(--font-ui-small);
+}
+
+.cfo-history-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.cfo-history-row-active {
+  background: var(--background-modifier-active-hover);
+}
+
+.cfo-history-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-normal);
+}
+
+.cfo-history-time {
+  flex: 0 0 auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.cfo-history-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+}
+
+.cfo-history-row:hover .cfo-history-actions {
+  opacity: 1;
+}
+
+.cfo-history-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.cfo-history-action:hover {
+  background: var(--background-modifier-hover-alt);
+  color: var(--text-accent);
+  box-shadow: none;
+}
+
+.cfo-history-action .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.cfo-history-rename-input {
+  flex: 1;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+}
+
+.cfo-history-rename-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}

@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, Menu, TFile, normalizePath, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, TFile, normalizePath, setIcon } from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -10,6 +10,24 @@ interface SessionSummary {
   id: string;
   label: string;
   timestamp: number;
+}
+
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 0) return "now";
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d`;
+  const w = Math.floor(d / 7);
+  if (w < 5) return `${w}w`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo`;
+  const y = Math.floor(d / 365);
+  return `${y}y`;
 }
 
 export const CLAUDE_FOR_OBSIDIAN_VIEW = "claude-for-obsidian-view";
@@ -71,10 +89,6 @@ export class ClaudeForObsidianView extends ItemView {
     setIcon(newBtn, "plus");
     newBtn.title = "New chat";
     newBtn.onclick = () => this.newChat();
-    const deleteBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
-    setIcon(deleteBtn, "trash-2");
-    deleteBtn.title = "Delete current chat";
-    deleteBtn.onclick = () => this.deleteCurrentChat();
     const saveBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
     setIcon(saveBtn, "download");
     saveBtn.title = "Save chat to vault";
@@ -87,6 +101,7 @@ export class ClaudeForObsidianView extends ItemView {
 
     this.activeSessionId = this.plugin.settings.activeSessionId ?? null;
     if (this.activeSessionId) {
+      this.replaySession(this.activeSessionId);
       this.statusEl.setText(`Continuing session ${this.activeSessionId}.`);
     }
 
@@ -214,21 +229,168 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private openHistoryMenu(evt: MouseEvent): void {
-    const menu = new Menu();
+    // Close any existing popup first.
+    document.querySelectorAll(".cfo-history-popup").forEach((el) => el.remove());
+
     const sessions = this.listSessions();
-    if (sessions.length === 0) {
-      menu.addItem((item) => item.setTitle("No recent chats").setDisabled(true));
-    } else {
-      for (const s of sessions) {
-        menu.addItem((item) =>
-          item
-            .setTitle(s.label || s.id)
-            .setChecked(s.id === this.activeSessionId)
-            .onClick(() => this.switchToSession(s.id))
-        );
+    const popup = document.body.createDiv({ cls: "cfo-history-popup" });
+
+    // Position near the trigger button.
+    const target = evt.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    popup.style.top = `${rect.bottom + 4}px`;
+    popup.style.right = `${window.innerWidth - rect.right}px`;
+
+    // Search input.
+    const searchWrap = popup.createDiv({ cls: "cfo-history-search" });
+    const searchIcon = searchWrap.createSpan({ cls: "cfo-history-search-icon" });
+    setIcon(searchIcon, "search");
+    const searchInput = searchWrap.createEl("input", {
+      cls: "cfo-history-search-input",
+      attr: { type: "text", placeholder: "Search sessions…" },
+    });
+
+    // Sessions list.
+    const list = popup.createDiv({ cls: "cfo-history-list" });
+
+    const render = (filter: string): void => {
+      list.empty();
+      const f = filter.trim().toLowerCase();
+      const filtered = f
+        ? sessions.filter((s) => (this.sessionLabel(s) || s.id).toLowerCase().includes(f))
+        : sessions;
+
+      if (filtered.length === 0) {
+        list.createDiv({ cls: "cfo-history-empty", text: "No sessions" });
+        return;
       }
+
+      for (const s of filtered) {
+        const row = list.createDiv({ cls: "cfo-history-row" });
+        if (s.id === this.activeSessionId) row.addClass("cfo-history-row-active");
+
+        const label = row.createDiv({ cls: "cfo-history-label" });
+        label.setText(this.sessionLabel(s));
+
+        const time = row.createDiv({ cls: "cfo-history-time" });
+        time.setText(relativeTime(s.timestamp));
+
+        const actions = row.createDiv({ cls: "cfo-history-actions" });
+        const renameBtn = actions.createEl("button", { cls: "cfo-history-action" });
+        setIcon(renameBtn, "pencil");
+        renameBtn.title = "Rename";
+        renameBtn.onclick = (e) => {
+          e.stopPropagation();
+          this.beginRename(row, label, s.id);
+        };
+        const trashBtn = actions.createEl("button", { cls: "cfo-history-action" });
+        setIcon(trashBtn, "trash-2");
+        trashBtn.title = "Delete";
+        trashBtn.onclick = (e) => {
+          e.stopPropagation();
+          this.confirmDelete(s.id, () => {
+            popup.remove();
+            this.openHistoryMenu(evt);
+          });
+        };
+
+        row.onclick = () => {
+          popup.remove();
+          this.switchToSession(s.id);
+        };
+      }
+    };
+
+    render("");
+    searchInput.addEventListener("input", () => render(searchInput.value));
+    searchInput.focus();
+
+    // Dismiss on outside click or Esc.
+    const dismiss = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node)) {
+        popup.remove();
+        document.removeEventListener("mousedown", dismiss, true);
+        document.removeEventListener("keydown", escDismiss, true);
+      }
+    };
+    const escDismiss = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        popup.remove();
+        document.removeEventListener("mousedown", dismiss, true);
+        document.removeEventListener("keydown", escDismiss, true);
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener("mousedown", dismiss, true);
+      document.addEventListener("keydown", escDismiss, true);
+    }, 0);
+  }
+
+  private sessionLabel(s: SessionSummary): string {
+    return this.plugin.settings.sessionLabels[s.id] || s.label || "(untitled)";
+  }
+
+  private beginRename(row: HTMLElement, labelEl: HTMLElement, id: string): void {
+    const current = this.plugin.settings.sessionLabels[id] || labelEl.textContent || "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = current;
+    input.className = "cfo-history-rename-input";
+    labelEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const commit = () => {
+      const next = input.value.trim();
+      if (next && next !== current) {
+        this.plugin.settings.sessionLabels[id] = next;
+        this.plugin.saveSettings();
+      } else if (!next) {
+        delete this.plugin.settings.sessionLabels[id];
+        this.plugin.saveSettings();
+      }
+      const newLabel = document.createElement("div");
+      newLabel.className = "cfo-history-label";
+      newLabel.textContent = next || row.dataset.fallbackLabel || "(untitled)";
+      input.replaceWith(newLabel);
+    };
+
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        const restored = document.createElement("div");
+        restored.className = "cfo-history-label";
+        restored.textContent = current;
+        input.replaceWith(restored);
+      }
+      e.stopPropagation();
+    });
+  }
+
+  private confirmDelete(id: string, after: () => void): void {
+    const isActive = id === this.activeSessionId;
+    const filePath = this.findSessionFile(id);
+    if (!filePath) {
+      new Notice("Session file not found.");
+      return;
     }
-    menu.showAtMouseEvent(evt);
+    if (!confirm("Delete this chat? This cannot be undone.")) return;
+    try {
+      fs.unlinkSync(filePath);
+    } catch (e: any) {
+      new Notice(`Could not delete: ${e.message}`);
+      return;
+    }
+    delete this.plugin.settings.sessionLabels[id];
+    this.plugin.saveSettings();
+    if (isActive) {
+      this.newChat();
+    }
+    after();
   }
 
   private switchToSession(id: string): void {
