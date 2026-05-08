@@ -151,8 +151,8 @@ export function exportSession(opts: {
   const firstUser = turns.find((t) => t.role === "user")?.text ?? "";
   const slug = slugify(firstUser);
   const filename = slug
-    ? `CFOB Chat - ${created} ${stamp} - ${slug}.md`
-    : `CFOB Chat - ${created} ${stamp}.md`;
+    ? `Claude Chat ${created} ${stamp} ${slug}.md`
+    : `Claude Chat ${created} ${stamp}.md`;
 
   const body = renderBody({
     turns,
@@ -178,10 +178,10 @@ function renderBody(args: {
 }): string {
   const front = [
     "---",
-    "type: cfob-chat",
+    "type: chat",
     `session_id: ${args.sessionId}`,
     `cwd: ${args.cwd}`,
-    `created: "[[${args.created}]]"`,
+    `created: ${args.created}`,
     `duration_s: ${args.durationS}`,
     `total_tokens: ${args.totalTokens}`,
     "---",
