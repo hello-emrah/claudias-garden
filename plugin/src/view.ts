@@ -62,9 +62,15 @@ export class ClaudeForObsidianView extends ItemView {
     const headerRow = root.createDiv({ cls: "cfo-header-row" });
     this.cwdBannerEl = headerRow.createDiv({ cls: "cfo-cwd-banner" });
     this.refreshCwdBanner();
-    const historyBtn = headerRow.createEl("button", { cls: "cfo-history-btn", text: "🕒" });
+    const historyBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "🕒" });
     historyBtn.title = "Recent chats in this vault";
     historyBtn.onclick = (evt) => this.openHistoryMenu(evt);
+    const newBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "＋" });
+    newBtn.title = "New chat";
+    newBtn.onclick = () => this.newChat();
+    const deleteBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "🗑" });
+    deleteBtn.title = "Delete current chat";
+    deleteBtn.onclick = () => this.deleteCurrentChat();
 
     this.outputEl = root.createDiv({ cls: "cfo-output" });
     this.statusEl = root.createDiv({ cls: "cfo-status", text: "Idle." });
@@ -229,6 +235,58 @@ export class ClaudeForObsidianView extends ItemView {
     this.sessionTokensUsed = 0;
     this.renderUsage();
     this.statusEl.setText(`Switched to session ${id}.`);
+  }
+
+  newChat(): void {
+    if (this.currentRun) {
+      new Notice("Cannot start a new chat while a run is in progress.");
+      return;
+    }
+    this.activeSessionId = null;
+    this.plugin.settings.activeSessionId = null;
+    this.plugin.saveSettings();
+    this.outputEl.empty();
+    this.sessionTokensUsed = 0;
+    this.renderUsage();
+    this.statusEl.setText("New chat. Send a message to begin.");
+  }
+
+  deleteCurrentChat(): void {
+    if (this.currentRun) {
+      new Notice("Cannot delete chat while a run is in progress.");
+      return;
+    }
+    const id = this.activeSessionId;
+    if (!id) {
+      new Notice("No active chat to delete.");
+      return;
+    }
+    const filePath = this.findSessionFile(id);
+    if (filePath) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (e: any) {
+        new Notice(`Could not delete session file: ${e.message}`);
+        return;
+      }
+    }
+    this.newChat();
+    this.statusEl.setText(`Deleted chat ${id}. New chat ready.`);
+  }
+
+  private findSessionFile(id: string): string | null {
+    const root = this.projectsRoot();
+    let projectDirs: string[];
+    try {
+      projectDirs = fs.readdirSync(root);
+    } catch {
+      return null;
+    }
+    for (const projectDir of projectDirs) {
+      const candidate = path.join(root, projectDir, `${id}.jsonl`);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
   }
 
   private appendUserBlock(text: string): void {

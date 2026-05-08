@@ -44,7 +44,7 @@
   -webkit-user-select: text;
 }
 
-.cfo-history-btn {
+.cfo-header-btn {
   flex: 0 0 auto;
   padding: 4px 8px;
   font-size: var(--font-ui-small);

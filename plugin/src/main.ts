@@ -18,7 +18,35 @@ export default class ClaudeForObsidianPlugin extends Plugin {
       callback: () => this.activateView(),
     });
 
+    this.addCommand({
+      id: "claude-for-obsidian-new-chat",
+      name: "New chat",
+      callback: () => this.withView((v) => v.newChat()),
+    });
+
+    this.addCommand({
+      id: "claude-for-obsidian-delete-current-chat",
+      name: "Delete current chat",
+      callback: () => this.withView((v) => v.deleteCurrentChat()),
+    });
+
     this.addSettingTab(new ClaudeForObsidianSettingTab(this.app, this));
+  }
+
+  private withView(fn: (view: ClaudeForObsidianView) => void): void {
+    const leaves = this.app.workspace.getLeavesOfType(CLAUDE_FOR_OBSIDIAN_VIEW);
+    if (leaves.length === 0) {
+      this.activateView().then(() => {
+        const after = this.app.workspace.getLeavesOfType(CLAUDE_FOR_OBSIDIAN_VIEW);
+        if (after.length > 0 && after[0].view instanceof ClaudeForObsidianView) {
+          fn(after[0].view as ClaudeForObsidianView);
+        }
+      });
+      return;
+    }
+    if (leaves[0].view instanceof ClaudeForObsidianView) {
+      fn(leaves[0].view as ClaudeForObsidianView);
+    }
   }
 
   async onunload(): Promise<void> {
