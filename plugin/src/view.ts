@@ -234,7 +234,75 @@ export class ClaudeForObsidianView extends ItemView {
     this.outputEl.empty();
     this.sessionTokensUsed = 0;
     this.renderUsage();
+    this.replaySession(id);
     this.statusEl.setText(`Switched to session ${id}.`);
+  }
+
+  private replaySession(id: string): void {
+    const filePath = this.findSessionFile(id);
+    if (!filePath) return;
+    let raw: string;
+    try {
+      raw = fs.readFileSync(filePath, "utf8");
+    } catch {
+      return;
+    }
+    let lastTokenTotal = 0;
+    let pendingAssistantText = "";
+    let pendingAssistantOpen = false;
+    const flushAssistant = () => {
+      if (!pendingAssistantOpen) return;
+      const buf = this.startAssistantBuffer();
+      buf.text = pendingAssistantText;
+      this.flushAssistantRender(buf);
+      pendingAssistantText = "";
+      pendingAssistantOpen = false;
+    };
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let evt: any;
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (evt.type === "user" && evt.message) {
+        flushAssistant();
+        const content = evt.message.content;
+        if (typeof content === "string") {
+          this.appendUserBlock(content);
+        } else if (Array.isArray(content)) {
+          const texts = content
+            .filter((b: any) => b?.type === "text" && typeof b.text === "string")
+            .map((b: any) => b.text)
+            .join("\n");
+          if (texts) this.appendUserBlock(texts);
+        }
+        continue;
+      }
+      if (evt.type === "assistant" && evt.message?.content) {
+        for (const block of evt.message.content) {
+          if (block.type === "text" && typeof block.text === "string") {
+            if (!pendingAssistantOpen) pendingAssistantOpen = true;
+            pendingAssistantText += block.text;
+          } else if (block.type === "tool_use") {
+            flushAssistant();
+            this.appendToolUse(block.name, block.input);
+          }
+        }
+        const usage = evt.message.usage;
+        if (usage && typeof usage === "object") {
+          const turn = this.tokensFromUsage(usage);
+          if (turn > lastTokenTotal) lastTokenTotal = turn;
+        }
+        continue;
+      }
+    }
+    flushAssistant();
+    if (lastTokenTotal > 0) {
+      this.sessionTokensUsed = lastTokenTotal;
+      this.renderUsage();
+    }
   }
 
   newChat(): void {
