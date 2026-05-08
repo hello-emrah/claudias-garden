@@ -4,6 +4,7 @@ import * as path from "path";
 import * as os from "os";
 import { ClaudeRun, StreamEvent } from "./claude-client";
 import { exportSession } from "./chat-export";
+import { WikilinkSuggest } from "./wikilink-suggest";
 import type ClaudeForObsidianPlugin from "./main";
 
 interface SessionSummary {
@@ -84,6 +85,7 @@ export class ClaudeForObsidianView extends ItemView {
   private sessionTokensUsed = 0;
   private lastStderr: string | null = null;
   private lastDateKey: string | null = null;
+  private wikilinkSuggest: WikilinkSuggest | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeForObsidianPlugin) {
     super(leaf);
@@ -167,6 +169,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.sendStopBtn.onclick = () => this.toggleSendStop();
     this.inputEl.addEventListener("input", () => this.autosizeInput());
     this.inputEl.addEventListener("keydown", (e) => {
+      if (this.wikilinkSuggest?.isOpen()) return;
       if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         this.toggleSendStop();
@@ -176,6 +179,8 @@ export class ClaudeForObsidianView extends ItemView {
       }
     });
 
+    this.wikilinkSuggest = new WikilinkSuggest(this.app, this.inputEl);
+
     this.renderComponent.load();
   }
 
@@ -184,6 +189,10 @@ export class ClaudeForObsidianView extends ItemView {
     if (this.thinkingTimer != null) {
       window.clearInterval(this.thinkingTimer);
       this.thinkingTimer = null;
+    }
+    if (this.wikilinkSuggest) {
+      this.wikilinkSuggest.destroy();
+      this.wikilinkSuggest = null;
     }
     this.renderComponent.unload();
   }

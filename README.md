@@ -6,7 +6,11 @@ This plugin does not call the Anthropic API directly and does not handle API key
 
 ## Highlights
 
-The plugin's pitch isn't *Claude in your sidebar* — that's been done. It's *Claude that lives inside the vault graph*. Four features carry the weight:
+The plugin's pitch isn't *Claude in your sidebar* — that's been done. It's *Claude that lives inside the vault graph*. Five features carry the weight:
+
+### Wikilink autocomplete in the input
+
+Type `[[` and a popup appears listing your vault notes, sorted by recently modified first. Filters live as you type, supports aliases (selecting an alias produces `[[Basename|Alias]]`), arrow keys navigate, Enter or Tab inserts. Same muscle memory as Obsidian's editor, in the chat box.
 
 ### Live wikilinks and hashtags in the chat stream
 
@@ -71,17 +75,15 @@ The plugin does not duplicate or override these. It inherits them by setting the
 
 ## Status
 
-Early. Built for one operator, shared because it might help others. Current tag: `v0.4.0`.
+Early. Built for one operator, shared because it might help others. Current tag: `v0.4.1`.
 
 Shipped:
 
 - **Increment 1** — chat panel, streaming markdown, autogrow input, vault scoped cwd
 - **Increment 2** — session continuity, history dropdown, new and delete chat, unified send/stop
-- **Increment 3** (mostly) — Obsidian-native chat: wikilink click and hover, save chat to vault, typography pass, history popup with search/rename/per-row delete, auto-resume replay on boot
+- **Increment 3** — Obsidian-native chat: wikilink click and hover, save chat to vault, typography pass, history popup with search/rename/per-row delete, auto-resume replay on boot, **wikilink autocomplete on `[[`**
 - **Polish + bug pass** — two-box input layout, animated thinking text with rotating verb pool, gated context counter, header redesign with chat title pill, popout-window history fix, cross-vault session leakage closed
 - **Wikilinked date dividers and per-message timestamps** — every chat shows clickable date markers and user-message times; replays reconstruct historical times from the jsonl
-
-Outstanding for Increment 3: wikilink autocomplete on `[[`.
 
 Planned:
 
