@@ -185,10 +185,12 @@
   margin-bottom: 0;
 }
 
-/* Tighter spacing throughout message bodies */
+/* Modest spacing throughout message bodies. The renderer's own
+   defaults are mostly fine now that pre-wrap is gone; we only nudge
+   a few things and otherwise let block flow govern. */
 .cfo-message-body p {
-  margin: 0.25em 0 !important;
-  line-height: 1.4;
+  margin: 0.6em 0;
+  line-height: 1.5;
 }
 
 .cfo-message-body h1,
@@ -197,63 +199,32 @@
 .cfo-message-body h4,
 .cfo-message-body h5,
 .cfo-message-body h6 {
-  margin: 0.5em 0 0.2em 0 !important;
-  line-height: 1.2;
+  margin: 1em 0 0.4em 0;
+  line-height: 1.25;
 }
 
 .cfo-message-body ul,
 .cfo-message-body ol {
-  margin: 0.25em 0 !important;
+  margin: 0.5em 0;
   padding-left: 1.4em;
 }
 
-/* Lists: aggressive flatten of all internal spacing.
-   Obsidian's renderer wraps <li> content in <p>, so target both. */
-.cfo-message-body ul li,
-.cfo-message-body ol li {
-  line-height: 1.35;
-  margin: 0 !important;
-  padding: 0 !important;
+.cfo-message-body li {
+  line-height: 1.5;
+  margin: 0.2em 0;
 }
 
-.cfo-message-body ul li > p,
-.cfo-message-body ol li > p,
-.cfo-message-body ul li > p:first-child,
-.cfo-message-body ol li > p:first-child,
-.cfo-message-body ul li > p:last-child,
-.cfo-message-body ol li > p:last-child {
-  margin: 0 !important;
-  padding: 0 !important;
-  line-height: 1.35 !important;
-}
-
-.cfo-message-body ul li + li,
-.cfo-message-body ol li + li {
-  margin-top: 0.15em !important;
+.cfo-message-body li > p {
+  margin: 0;
 }
 
 .cfo-message-body blockquote {
-  margin: 0.3em 0;
-  padding: 0.2em 0.8em;
+  margin: 0.6em 0;
+  padding: 0.4em 0.8em;
 }
 
-.cfo-message-body blockquote p {
-  margin: 0.15em 0 !important;
-}
-
-.cfo-message-body > * + * {
-  margin-top: 0.3em;
-}
-
-/* Tool blocks: a bit of breathing room between tool output
-   and the assistant prose that follows. */
 .cfo-message-tool {
-  margin: 0.4em 0 !important;
-}
-
-.cfo-message-tool + p,
-p + .cfo-message-tool {
-  margin-top: 0.5em !important;
+  margin: 0.6em 0;
 }
 
 .cfo-message-body pre {
