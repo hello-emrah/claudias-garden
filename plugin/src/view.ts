@@ -39,7 +39,32 @@ interface AssistantBuffer {
   renderTimer: number | null;
 }
 
-// Context window for the current default model. Hardcoded for T01.
+const THINKING_VERBS = [
+  "Foraging",
+  "Frolicking",
+  "Bird watching",
+  "Gallivanting",
+  "Weeding",
+  "Harvesting",
+  "Encouraging",
+  "Gathering",
+  "Mulching",
+  "Composting",
+  "Pruning",
+  "Sowing",
+  "Divining",
+  "Listening",
+  "Wandering",
+  "Pottering",
+  "Distilling",
+  "Tending",
+  "Kindling",
+  "Musing",
+];
+
+const THINKING_ROTATE_MS = 3000;
+
+// Context window for the current default model. Hardcoded for now.
 // Increment 4 makes this model-aware via the model picker.
 const CONTEXT_WINDOW_TOKENS = 1_000_000;
 
@@ -48,15 +73,16 @@ export class ClaudeForObsidianView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private statusEl!: HTMLDivElement;
   private usageEl!: HTMLDivElement;
-  private cwdBannerEl!: HTMLDivElement;
   private chatTitleEl!: HTMLDivElement;
   private sendStopBtn!: HTMLButtonElement;
   private currentRun: ClaudeRun | null = null;
   private currentAssistant: AssistantBuffer | null = null;
   private renderComponent: Component = new Component();
-  private sessionTokensUsed = 0;
   private activeSessionId: string | null = null;
   private pendingTitle: string | null = null;
+  private thinkingTimer: number | null = null;
+  private sessionTokensUsed = 0;
+  private lastStderr: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeForObsidianPlugin) {
     super(leaf);
@@ -80,9 +106,7 @@ export class ClaudeForObsidianView extends ItemView {
     root.addClass("claude-for-obsidian-view");
 
     const headerRow = root.createDiv({ cls: "cfo-header-row" });
-    this.cwdBannerEl = headerRow.createDiv({ cls: "cfo-cwd-banner" });
-    this.refreshCwdBanner();
-    this.chatTitleEl = headerRow.createDiv({ cls: "cfo-chat-title" });
+    this.chatTitleEl = headerRow.createDiv({ cls: "cfo-chat-title-tab" });
     this.refreshChatTitle();
     headerRow.createDiv({ cls: "cfo-header-spacer" });
     const historyBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
@@ -99,30 +123,50 @@ export class ClaudeForObsidianView extends ItemView {
     saveBtn.onclick = () => this.saveChatToVault();
 
     this.outputEl = root.createDiv({ cls: "cfo-output" });
-    this.statusEl = root.createDiv({ cls: "cfo-status", text: "Idle." });
-    this.usageEl = root.createDiv({ cls: "cfo-usage" });
-    this.renderUsage();
 
     this.activeSessionId = this.plugin.settings.activeSessionId ?? null;
     if (this.activeSessionId) {
       this.replaySession(this.activeSessionId);
-      this.statusEl.setText(`Continuing session ${this.activeSessionId}.`);
     }
     this.refreshChatTitle();
 
-    const inputRow = root.createDiv({ cls: "cfo-input-row" });
-    this.inputEl = inputRow.createEl("textarea", { cls: "cfo-input" });
-    this.inputEl.placeholder = "Message Claude. Cmd-Enter to send.";
+    const inputStack = root.createDiv({ cls: "cfo-input-stack" });
+
+    this.statusEl = inputStack.createDiv({ cls: "cfo-status" });
+
+    const textBox = inputStack.createDiv({ cls: "cfo-textbox" });
+    this.inputEl = textBox.createEl("textarea", { cls: "cfo-input" });
+    this.inputEl.placeholder = "Message Claude. Enter to send, Shift-Enter for newline.";
     this.inputEl.rows = 1;
     this.autosizeInput();
 
-    this.sendStopBtn = inputRow.createEl("button", { cls: "cfo-send-stop-btn" });
+    const footerNav = inputStack.createDiv({ cls: "cfo-footer-nav" });
+
+    const plusBtn = footerNav.createEl("button", { cls: "cfo-footer-btn cfo-footer-btn-disabled" });
+    setIcon(plusBtn, "plus");
+    plusBtn.title = "Attach (coming soon)";
+    plusBtn.disabled = true;
+
+    const slashBtn = footerNav.createEl("button", { cls: "cfo-footer-btn cfo-footer-btn-disabled" });
+    setIcon(slashBtn, "slash");
+    slashBtn.title = "Slash commands (coming soon)";
+    slashBtn.disabled = true;
+
+    this.usageEl = footerNav.createDiv({ cls: "cfo-usage" });
+    this.renderUsage();
+
+    const permBtn = footerNav.createEl("button", { cls: "cfo-footer-btn cfo-footer-btn-disabled" });
+    setIcon(permBtn, "code-2");
+    permBtn.title = "Edit permissions (coming soon)";
+    permBtn.disabled = true;
+
+    this.sendStopBtn = footerNav.createEl("button", { cls: "cfo-send-stop-btn" });
     setIcon(this.sendStopBtn, "arrow-up");
-    this.sendStopBtn.title = "Send (Cmd-Enter)";
+    this.sendStopBtn.title = "Send (Enter)";
     this.sendStopBtn.onclick = () => this.toggleSendStop();
     this.inputEl.addEventListener("input", () => this.autosizeInput());
     this.inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         this.toggleSendStop();
       } else if (e.key === "Escape" && this.currentRun) {
@@ -136,6 +180,10 @@ export class ClaudeForObsidianView extends ItemView {
 
   async onClose(): Promise<void> {
     this.cancel();
+    if (this.thinkingTimer != null) {
+      window.clearInterval(this.thinkingTimer);
+      this.thinkingTimer = null;
+    }
     this.renderComponent.unload();
   }
 
@@ -160,11 +208,6 @@ export class ClaudeForObsidianView extends ItemView {
 
   private vaultName(): string {
     return this.app.vault.getName();
-  }
-
-  private refreshCwdBanner(): void {
-    if (!this.cwdBannerEl) return;
-    this.cwdBannerEl.setText(this.vaultName());
   }
 
   private refreshChatTitle(): void {
@@ -216,80 +259,76 @@ export class ClaudeForObsidianView extends ItemView {
     return path.join(os.homedir(), ".claude", "projects");
   }
 
+  private encodedCwd(): string {
+    // Claude Code encodes the cwd by replacing every character that isn't
+    // alphanumeric with a hyphen. So `/Users/foo/@Bar Baz` becomes
+    // `-Users-foo--Bar-Baz`.
+    return this.resolveCwd().replace(/[^A-Za-z0-9]/g, "-");
+  }
+
   private listSessions(): SessionSummary[] {
     const root = this.projectsRoot();
-    const cwd = this.resolveCwd();
-    let projectDirs: string[];
+    const dirPath = path.join(root, this.encodedCwd());
+    let files: string[];
     try {
-      projectDirs = fs.readdirSync(root);
+      files = fs.readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
     } catch {
       return [];
     }
     const summaries: SessionSummary[] = [];
-    for (const projectDir of projectDirs) {
-      const dirPath = path.join(root, projectDir);
-      let files: string[];
+    for (const file of files) {
+      const fullPath = path.join(dirPath, file);
+      const id = file.replace(/\.jsonl$/, "");
+      let label = "(empty)";
+      let stat: fs.Stats;
       try {
-        files = fs.readdirSync(dirPath).filter((f) => f.endsWith(".jsonl"));
+        stat = fs.statSync(fullPath);
       } catch {
         continue;
       }
-      for (const file of files) {
-        const fullPath = path.join(dirPath, file);
-        const id = file.replace(/\.jsonl$/, "");
-        let label = "(empty)";
-        let belongsToCwd = false;
-        let stat: fs.Stats;
-        try {
-          stat = fs.statSync(fullPath);
-        } catch {
-          continue;
-        }
-        try {
-          const head = fs.readFileSync(fullPath, "utf8").split("\n").slice(0, 50);
-          for (const line of head) {
-            if (!line.trim()) continue;
-            try {
-              const evt = JSON.parse(line);
-              if (typeof evt.cwd === "string" && evt.cwd === cwd) {
-                belongsToCwd = true;
-              }
-              if (label === "(empty)") {
-                if (evt.type === "user" && typeof evt.message?.content === "string") {
-                  label = evt.message.content;
-                } else if (evt.type === "queue-operation" && typeof evt.content === "string") {
-                  label = evt.content;
-                }
-              }
-              if (belongsToCwd && label !== "(empty)") break;
-            } catch {
-              // skip malformed line
+      try {
+        const head = fs.readFileSync(fullPath, "utf8").split("\n").slice(0, 50);
+        for (const line of head) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === "user" && typeof evt.message?.content === "string") {
+              label = evt.message.content;
+              break;
             }
+            if (evt.type === "queue-operation" && typeof evt.content === "string") {
+              label = evt.content;
+              break;
+            }
+          } catch {
+            // skip malformed line
           }
-        } catch {
-          // unreadable file; skip
         }
-        if (!belongsToCwd) continue;
-        const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
-        summaries.push({ id, label: truncated, timestamp: stat.mtimeMs });
+      } catch {
+        // unreadable file; skip
       }
+      const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
+      summaries.push({ id, label: truncated, timestamp: stat.mtimeMs });
     }
     summaries.sort((a, b) => b.timestamp - a.timestamp);
     return summaries;
   }
 
   private openHistoryMenu(evt: MouseEvent): void {
-    // Close any existing popup first.
-    document.querySelectorAll(".cfo-history-popup").forEach((el) => el.remove());
+    const doc = this.containerEl.ownerDocument;
+    const win = doc.defaultView ?? window;
+
+    // Close any existing popup first, scoped to the containing window.
+    doc.querySelectorAll(".cfo-history-popup").forEach((el) => el.remove());
 
     const sessions = this.listSessions();
-    const popup = document.body.createDiv({ cls: "cfo-history-popup" });
+    const popup = doc.body.createDiv({ cls: "cfo-history-popup" });
 
     // Position near the trigger button.
     const target = evt.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     popup.style.top = `${rect.bottom + 4}px`;
-    popup.style.right = `${window.innerWidth - rect.right}px`;
+    popup.style.right = `${win.innerWidth - rect.right}px`;
 
     // Search input.
     const searchWrap = popup.createDiv({ cls: "cfo-history-search" });
@@ -356,24 +395,24 @@ export class ClaudeForObsidianView extends ItemView {
     searchInput.addEventListener("input", () => render(searchInput.value));
     searchInput.focus();
 
-    // Dismiss on outside click or Esc.
+    // Dismiss on outside click or Esc, scoped to the containing window.
     const dismiss = (e: MouseEvent) => {
       if (!popup.contains(e.target as Node)) {
         popup.remove();
-        document.removeEventListener("mousedown", dismiss, true);
-        document.removeEventListener("keydown", escDismiss, true);
+        doc.removeEventListener("mousedown", dismiss, true);
+        doc.removeEventListener("keydown", escDismiss, true);
       }
     };
     const escDismiss = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         popup.remove();
-        document.removeEventListener("mousedown", dismiss, true);
-        document.removeEventListener("keydown", escDismiss, true);
+        doc.removeEventListener("mousedown", dismiss, true);
+        doc.removeEventListener("keydown", escDismiss, true);
       }
     };
     setTimeout(() => {
-      document.addEventListener("mousedown", dismiss, true);
-      document.addEventListener("keydown", escDismiss, true);
+      doc.addEventListener("mousedown", dismiss, true);
+      doc.addEventListener("keydown", escDismiss, true);
     }, 0);
   }
 
@@ -464,7 +503,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.renderUsage();
     this.replaySession(id);
     this.refreshChatTitle();
-    this.statusEl.setText(`Switched to session ${id}.`);
+    this.clearStatus();
   }
 
   private replaySession(id: string): void {
@@ -547,7 +586,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.sessionTokensUsed = 0;
     this.renderUsage();
     this.refreshChatTitle();
-    this.statusEl.setText("New chat. Send a message to begin.");
+    this.clearStatus();
   }
 
   deleteCurrentChat(): void {
@@ -570,7 +609,6 @@ export class ClaudeForObsidianView extends ItemView {
       }
     }
     this.newChat();
-    this.statusEl.setText(`Deleted chat ${id}. New chat ready.`);
   }
 
   async saveChatToVault(): Promise<void> {
@@ -627,18 +665,8 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private findSessionFile(id: string): string | null {
-    const root = this.projectsRoot();
-    let projectDirs: string[];
-    try {
-      projectDirs = fs.readdirSync(root);
-    } catch {
-      return null;
-    }
-    for (const projectDir of projectDirs) {
-      const candidate = path.join(root, projectDir, `${id}.jsonl`);
-      if (fs.existsSync(candidate)) return candidate;
-    }
-    return null;
+    const candidate = path.join(this.projectsRoot(), this.encodedCwd(), `${id}.jsonl`);
+    return fs.existsSync(candidate) ? candidate : null;
   }
 
   private appendUserBlock(text: string): void {
@@ -763,7 +791,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.autosizeInput();
     this.currentAssistant = null;
     this.setBusy(true);
-    this.statusEl.setText(`Running in ${this.vaultName()}…`);
+    this.setThinking(true);
 
     const run = new ClaudeRun({
       prompt,
@@ -786,16 +814,41 @@ export class ClaudeForObsidianView extends ItemView {
   private setBusy(busy: boolean): void {
     this.sendStopBtn.empty();
     setIcon(this.sendStopBtn, busy ? "square" : "arrow-up");
-    this.sendStopBtn.title = busy ? "Stop (Esc)" : "Send (Cmd-Enter)";
+    this.sendStopBtn.title = busy ? "Stop (Esc)" : "Send (Enter)";
     this.sendStopBtn.toggleClass("cfo-send-stop-btn-busy", busy);
+    if (!busy) this.setThinking(false);
   }
 
-  private toggleSendStop(): void {
-    if (this.currentRun) {
-      this.cancel();
-    } else {
-      this.send();
+  private clearStatus(): void {
+    if (!this.statusEl) return;
+    this.statusEl.empty();
+    this.statusEl.removeClass("cfo-status-thinking");
+  }
+
+  private setThinking(thinking: boolean): void {
+    if (!this.statusEl) return;
+    if (this.thinkingTimer != null) {
+      window.clearInterval(this.thinkingTimer);
+      this.thinkingTimer = null;
     }
+    if (!thinking) {
+      this.clearStatus();
+      return;
+    }
+    this.statusEl.addClass("cfo-status-thinking");
+    this.renderThinkingFrame();
+    this.thinkingTimer = window.setInterval(() => this.renderThinkingFrame(), THINKING_ROTATE_MS);
+  }
+
+  private renderThinkingFrame(): void {
+    if (!this.statusEl) return;
+    const verb = THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)];
+    this.statusEl.empty();
+    const dots = this.statusEl.createSpan({ cls: "cfo-thinking-dots" });
+    dots.createSpan({ cls: "cfo-thinking-dot" });
+    dots.createSpan({ cls: "cfo-thinking-dot" });
+    dots.createSpan({ cls: "cfo-thinking-dot" });
+    this.statusEl.createSpan({ cls: "cfo-thinking-label", text: verb });
   }
 
   private tokensFromUsage(usage: any): number {
@@ -810,10 +863,14 @@ export class ClaudeForObsidianView extends ItemView {
   private renderUsage(): void {
     if (!this.usageEl) return;
     const used = this.sessionTokensUsed;
+    const usedPct = (used / CONTEXT_WINDOW_TOKENS) * 100;
+    if (usedPct < 50) {
+      this.usageEl.empty();
+      return;
+    }
     const remaining = Math.max(0, CONTEXT_WINDOW_TOKENS - used);
     const pct = Math.round((remaining / CONTEXT_WINDOW_TOKENS) * 100);
-    const usedLabel = this.formatTokens(used);
-    this.usageEl.setText(`${pct}% Context Remains · ${usedLabel} Tokens Used`);
+    this.usageEl.setText(`${pct}% Context Remains`);
   }
 
   private formatTokens(n: number): string {
@@ -822,20 +879,27 @@ export class ClaudeForObsidianView extends ItemView {
     return String(n);
   }
 
+  private toggleSendStop(): void {
+    if (this.currentRun) {
+      this.cancel();
+    } else {
+      this.send();
+    }
+  }
+
   private handleEvent(e: StreamEvent): void {
     switch (e.kind) {
       case "system": {
         const sid = e.raw.session_id ?? null;
         if (!sid) break;
-        const isResume = !!this.activeSessionId;
         this.activeSessionId = sid;
         this.plugin.settings.activeSessionId = sid;
         this.plugin.saveSettings();
         this.refreshChatTitle();
-        this.statusEl.setText(isResume ? `Resumed session.` : `Session ${sid} started.`);
         break;
       }
       case "assistant-text":
+        this.setThinking(false);
         if (!this.currentAssistant) {
           this.currentAssistant = this.startAssistantBuffer();
         }
@@ -843,43 +907,46 @@ export class ClaudeForObsidianView extends ItemView {
         this.scheduleAssistantRender(this.currentAssistant);
         break;
       case "tool-use":
+        this.setThinking(false);
         if (this.currentAssistant) this.flushAssistantRender(this.currentAssistant);
         this.currentAssistant = null;
         this.appendToolUse(e.name, e.input);
         break;
       case "tool-result":
-        // Surfacing tool results inline can be noisy; status only.
         if (e.isError) {
+          this.clearStatus();
           this.statusEl.setText(`Tool error.`);
         }
         break;
       case "result": {
-        const r = e.raw;
-        const dur = r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : "";
-        const turnTokens = this.tokensFromUsage(r.usage);
+        const turnTokens = this.tokensFromUsage(e.raw.usage);
         if (turnTokens > 0) {
           this.sessionTokensUsed = Math.max(this.sessionTokensUsed, turnTokens);
           this.renderUsage();
         }
-        this.statusEl.setText(`Done. ${dur}`.trim());
         break;
       }
       case "stderr":
-        this.statusEl.setText(`stderr: ${e.line.slice(0, 200)}`);
+        this.lastStderr = e.line;
         break;
       case "error":
         new Notice(`Claude for Obsidian: ${e.message}`);
+        this.clearStatus();
         this.statusEl.setText(`Error: ${e.message}`);
         break;
-      case "exit":
+      case "exit": {
+        const hadOutput = !!this.currentAssistant;
         if (this.currentAssistant) this.flushAssistantRender(this.currentAssistant);
         this.currentRun = null;
         this.currentAssistant = null;
         this.setBusy(false);
-        if (e.code !== 0 && e.code !== null) {
-          this.statusEl.setText(`Exited with code ${e.code}.`);
+        if (e.code !== 0 && e.code !== null && !hadOutput) {
+          const detail = this.lastStderr ? ` ${this.lastStderr.slice(0, 200)}` : "";
+          new Notice(`Claude for Obsidian exited (${e.code}).${detail}`);
         }
+        this.lastStderr = null;
         break;
+      }
     }
   }
 }
