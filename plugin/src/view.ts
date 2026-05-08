@@ -11,16 +11,22 @@ interface AssistantBuffer {
   renderTimer: number | null;
 }
 
+// Context window for the current default model. Hardcoded for T01.
+// Increment 4 makes this model-aware via the model picker.
+const CONTEXT_WINDOW_TOKENS = 1_000_000;
+
 export class ClaudeForObsidianView extends ItemView {
   private outputEl!: HTMLDivElement;
   private inputEl!: HTMLTextAreaElement;
   private statusEl!: HTMLDivElement;
+  private usageEl!: HTMLDivElement;
   private cwdBannerEl!: HTMLDivElement;
   private sendBtn!: HTMLButtonElement;
   private cancelBtn!: HTMLButtonElement;
   private currentRun: ClaudeRun | null = null;
   private currentAssistant: AssistantBuffer | null = null;
   private renderComponent: Component = new Component();
+  private sessionTokensUsed = 0;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeForObsidianPlugin) {
     super(leaf);
@@ -48,6 +54,8 @@ export class ClaudeForObsidianView extends ItemView {
 
     this.outputEl = root.createDiv({ cls: "cfo-output" });
     this.statusEl = root.createDiv({ cls: "cfo-status", text: "Idle." });
+    this.usageEl = root.createDiv({ cls: "cfo-usage" });
+    this.renderUsage();
 
     const inputRow = root.createDiv({ cls: "cfo-input-row" });
     this.inputEl = inputRow.createEl("textarea", { cls: "cfo-input" });
@@ -197,6 +205,30 @@ export class ClaudeForObsidianView extends ItemView {
     this.cancelBtn.disabled = !busy;
   }
 
+  private tokensFromUsage(usage: any): number {
+    if (!usage || typeof usage !== "object") return 0;
+    const input = Number(usage.input_tokens) || 0;
+    const output = Number(usage.output_tokens) || 0;
+    const cacheCreate = Number(usage.cache_creation_input_tokens) || 0;
+    const cacheRead = Number(usage.cache_read_input_tokens) || 0;
+    return input + output + cacheCreate + cacheRead;
+  }
+
+  private renderUsage(): void {
+    if (!this.usageEl) return;
+    const used = this.sessionTokensUsed;
+    const remaining = Math.max(0, CONTEXT_WINDOW_TOKENS - used);
+    const pct = Math.round((remaining / CONTEXT_WINDOW_TOKENS) * 100);
+    const usedLabel = this.formatTokens(used);
+    this.usageEl.setText(`${pct}% Context Remains · ${usedLabel} Tokens Used`);
+  }
+
+  private formatTokens(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  }
+
   private handleEvent(e: StreamEvent): void {
     switch (e.kind) {
       case "system":
@@ -223,8 +255,12 @@ export class ClaudeForObsidianView extends ItemView {
       case "result": {
         const r = e.raw;
         const dur = r.duration_ms ? `${(r.duration_ms / 1000).toFixed(1)}s` : "";
-        const cost = r.total_cost_usd != null ? `$${r.total_cost_usd.toFixed(4)}` : "";
-        this.statusEl.setText(`Done. ${dur} ${cost}`.trim());
+        const turnTokens = this.tokensFromUsage(r.usage);
+        if (turnTokens > 0) {
+          this.sessionTokensUsed = Math.max(this.sessionTokensUsed, turnTokens);
+          this.renderUsage();
+        }
+        this.statusEl.setText(`Done. ${dur}`.trim());
         break;
       }
       case "stderr":

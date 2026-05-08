@@ -112,3 +112,10 @@
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
+
+.cfo-usage {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  padding: 2px 6px;
+}
