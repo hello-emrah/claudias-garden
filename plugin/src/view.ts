@@ -30,8 +30,7 @@ export class ClaudeForObsidianView extends ItemView {
   private statusEl!: HTMLDivElement;
   private usageEl!: HTMLDivElement;
   private cwdBannerEl!: HTMLDivElement;
-  private sendBtn!: HTMLButtonElement;
-  private cancelBtn!: HTMLButtonElement;
+  private sendStopBtn!: HTMLButtonElement;
   private currentRun: ClaudeRun | null = null;
   private currentAssistant: AssistantBuffer | null = null;
   private renderComponent: Component = new Component();
@@ -88,18 +87,17 @@ export class ClaudeForObsidianView extends ItemView {
     this.inputEl.rows = 1;
     this.autosizeInput();
 
-    const btnCol = inputRow.createDiv({ cls: "cfo-btn-col" });
-    this.sendBtn = btnCol.createEl("button", { text: "Send" });
-    this.cancelBtn = btnCol.createEl("button", { text: "Cancel" });
-    this.cancelBtn.disabled = true;
-
-    this.sendBtn.onclick = () => this.send();
-    this.cancelBtn.onclick = () => this.cancel();
+    this.sendStopBtn = inputRow.createEl("button", { cls: "cfo-send-stop-btn", text: "↑" });
+    this.sendStopBtn.title = "Send (Cmd-Enter)";
+    this.sendStopBtn.onclick = () => this.toggleSendStop();
     this.inputEl.addEventListener("input", () => this.autosizeInput());
     this.inputEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        this.send();
+        this.toggleSendStop();
+      } else if (e.key === "Escape" && this.currentRun) {
+        e.preventDefault();
+        this.cancel();
       }
     });
 
@@ -445,8 +443,17 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private setBusy(busy: boolean): void {
-    this.sendBtn.disabled = busy;
-    this.cancelBtn.disabled = !busy;
+    this.sendStopBtn.setText(busy ? "⏹" : "↑");
+    this.sendStopBtn.title = busy ? "Stop (Esc)" : "Send (Cmd-Enter)";
+    this.sendStopBtn.toggleClass("cfo-send-stop-btn-busy", busy);
+  }
+
+  private toggleSendStop(): void {
+    if (this.currentRun) {
+      this.cancel();
+    } else {
+      this.send();
+    }
   }
 
   private tokensFromUsage(usage: any): number {

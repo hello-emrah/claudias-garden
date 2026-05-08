@@ -81,6 +81,24 @@
   align-items: flex-end;
 }
 
+.cfo-send-stop-btn {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  padding: 6px 10px;
+  font-size: var(--font-ui-medium);
+  cursor: pointer;
+  min-width: 36px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cfo-send-stop-btn-busy {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
 .cfo-input {
   flex: 1;
   resize: none;
