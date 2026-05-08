@@ -392,29 +392,6 @@ export class ClaudeForObsidianView extends ItemView {
   private renderMarkdownInto(markdown: string, el: HTMLElement): void {
     el.empty();
     MarkdownRenderer.render(this.app, markdown, el, this.resolveCwd(), this.renderComponent);
-    this.attachCopyButtons(el);
-  }
-
-  private attachCopyButtons(el: HTMLElement): void {
-    const blocks = el.querySelectorAll("pre");
-    blocks.forEach((pre) => {
-      if (pre.querySelector(".cfo-copy-btn")) return;
-      const btn = pre.createEl("button", { cls: "cfo-copy-btn", text: "⧉" });
-      btn.title = "Copy code";
-      btn.onclick = (evt) => {
-        evt.stopPropagation();
-        const code = pre.querySelector("code");
-        const text = code ? code.textContent ?? "" : pre.textContent ?? "";
-        navigator.clipboard.writeText(text).then(() => {
-          btn.setText("✓");
-          btn.addClass("cfo-copy-btn-copied");
-          window.setTimeout(() => {
-            btn.setText("⧉");
-            btn.removeClass("cfo-copy-btn-copied");
-          }, 1200);
-        });
-      };
-    });
   }
 
   private appendToolUse(name: string, input: any): void {

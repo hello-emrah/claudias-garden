@@ -148,27 +148,12 @@
   font-size: var(--font-ui-smaller);
 }
 
-.cfo-copy-btn {
+.cfo-message-body pre .copy-code-button {
   position: absolute;
   top: 6px;
   right: 6px;
-  padding: 2px 6px;
-  font-size: var(--font-ui-smaller);
-  background: var(--background-modifier-hover);
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.15s ease-in-out;
-}
-
-.cfo-message-body pre:hover .cfo-copy-btn {
-  opacity: 1;
-}
-
-.cfo-copy-btn-copied {
-  opacity: 1 !important;
-  color: var(--text-success);
+  bottom: auto;
+  left: auto;
 }
 
 .cfo-message-user .cfo-message-body {
