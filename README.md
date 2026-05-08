@@ -4,19 +4,35 @@
 
 This plugin does not call the Anthropic API directly and does not handle API keys. It spawns the locally installed `claude` CLI as a subprocess, which means it uses whichever account that CLI is signed in to, including a Claude subscription.
 
-## What it does
+## Highlights
 
-- Sidebar chat panel inside Obsidian
-- Streams responses with live markdown rendering
+The plugin's pitch isn't *Claude in your sidebar* — that's been done. It's *Claude that lives inside the vault graph*. Four features carry the weight:
+
+### Live wikilinks and hashtags in the chat stream
+
+Anything Claude (or you) writes that looks like `[[Some Note]]` renders as an Obsidian wikilink in the conversation. Click opens the note. Cmd-hover triggers Page Preview. `#tag` clicks through to a global tag search. The chat isn't a transcript pretending to be markdown — it's the same graph fabric as the rest of your vault.
+
+### Wikilinked dates and per-message timestamps
+
+Every chat shows a `─── [[YYYY-MM-DD]] ───` divider at the top, and another at every midnight crossing if a chat runs across days. The date is a clickable wikilink, opening the daily note. User messages carry an `HH:MM` timestamp right-aligned next to the speaker label. Replays reconstruct historical times accurately from the underlying jsonl. As far as I know, no other LLM chat surface ties chats into the vault's calendar this way.
+
+### Save chat to vault
+
+A button on the panel exports the current conversation as a structured markdown transcript with proper speaker headings, time-stamped, frontmatter included, ready to drop into a daily note, project folder, or a permanent record. The export schema is locked and used vault-wide.
+
+### Cross-client session visibility
+
+All Claude Code sessions for a given working directory write to the same `~/.claude/projects/<encoded-cwd>/` folder regardless of which surface created them — terminal CLI, VS Code extension, or this plugin. The history dropdown surfaces the lot. You can browse and continue chats started in any of those surfaces from inside Obsidian.
+
+## Other things it does
+
+- Sidebar chat panel; streams responses with live markdown rendering
 - Working directory locked to the active vault, so `CLAUDE.md` and skills in `~/.claude/` and `<vault>/.claude/` are picked up automatically
-- Wikilinks render live: click to open, cmd-hover for page preview, hashtags click through to global search
 - Tool calls render inline as collapsible blocks
-- Session continuity: history dropdown of recent chats for the current vault, switch between them, replay-on-switch, auto-resume across panel reopens and app relaunches
-- Sessions started from any Claude Code surface (terminal, VS Code extension) for the same working directory show up in the history dropdown — one place to see and continue your Claude work for that vault
-- Save chat to vault as a structured markdown transcript, ready to file in the daily note or a project folder
-- Animated thinking text while the agent is working, drawn from a small lexicon
+- Session continuity: switch between recent chats with replay, auto-resume across panel reopens and app relaunches
+- Animated thinking text while the agent is working, drawn from a small lexicon (foraging, frolicking, weeding, musing, …)
 - Context-remaining counter that only surfaces when 50% of the window has been consumed, so you aren't counted while you write
-- Auto growing input, one to ten lines
+- Auto-growing input, one to ten lines, Enter to send, Shift-Enter for newline
 
 ## Requirements
 
@@ -55,13 +71,15 @@ The plugin does not duplicate or override these. It inherits them by setting the
 
 ## Status
 
-Early. Built for one operator, shared because it might help others. Current tag: `v0.3.3`.
+Early. Built for one operator, shared because it might help others. Current tag: `v0.4.0`.
 
 Shipped:
 
 - **Increment 1** — chat panel, streaming markdown, autogrow input, vault scoped cwd
 - **Increment 2** — session continuity, history dropdown, new and delete chat, unified send/stop
-- **Increment 3** (mostly) — Obsidian-native chat: wikilink click and hover, save chat to vault, typography pass, history popup with search and rename and per-row delete, auto-resume replay on boot
+- **Increment 3** (mostly) — Obsidian-native chat: wikilink click and hover, save chat to vault, typography pass, history popup with search/rename/per-row delete, auto-resume replay on boot
+- **Polish + bug pass** — two-box input layout, animated thinking text with rotating verb pool, gated context counter, header redesign with chat title pill, popout-window history fix, cross-vault session leakage closed
+- **Wikilinked date dividers and per-message timestamps** — every chat shows clickable date markers and user-message times; replays reconstruct historical times from the jsonl
 
 Outstanding for Increment 3: wikilink autocomplete on `[[`.
 
