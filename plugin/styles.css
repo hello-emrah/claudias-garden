@@ -188,7 +188,8 @@
 
 /* Tighter spacing throughout message bodies */
 .cfo-message-body p {
-  margin: 0.3em 0;
+  margin: 0.25em 0 !important;
+  line-height: 1.4;
 }
 
 .cfo-message-body h1,
@@ -197,23 +198,41 @@
 .cfo-message-body h4,
 .cfo-message-body h5,
 .cfo-message-body h6 {
-  margin: 0.6em 0 0.3em 0;
-  line-height: 1.25;
+  margin: 0.5em 0 0.2em 0 !important;
+  line-height: 1.2;
 }
 
 .cfo-message-body ul,
 .cfo-message-body ol {
-  margin: 0.3em 0;
+  margin: 0.25em 0 !important;
   padding-left: 1.4em;
 }
 
 .cfo-message-body li {
   line-height: 1.35;
-  margin: 0.1em 0;
+  margin: 0 !important;
+  padding: 0;
 }
 
 .cfo-message-body li > p {
-  margin: 0.1em 0;
+  margin: 0 !important;
+}
+
+.cfo-message-body li + li {
+  margin-top: 0.1em !important;
+}
+
+.cfo-message-body blockquote {
+  margin: 0.3em 0;
+  padding: 0.2em 0.8em;
+}
+
+.cfo-message-body blockquote p {
+  margin: 0.15em 0 !important;
+}
+
+.cfo-message-body > * + * {
+  margin-top: 0.3em;
 }
 
 .cfo-message-body pre {
