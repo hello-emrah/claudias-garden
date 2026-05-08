@@ -83,6 +83,7 @@ export class ClaudeForObsidianView extends ItemView {
   private thinkingTimer: number | null = null;
   private sessionTokensUsed = 0;
   private lastStderr: string | null = null;
+  private lastDateKey: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeForObsidianPlugin) {
     super(leaf);
@@ -500,6 +501,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.plugin.saveSettings();
     this.outputEl.empty();
     this.sessionTokensUsed = 0;
+    this.lastDateKey = null;
     this.renderUsage();
     this.replaySession(id);
     this.refreshChatTitle();
@@ -518,9 +520,10 @@ export class ClaudeForObsidianView extends ItemView {
     let lastTokenTotal = 0;
     let pendingAssistantText = "";
     let pendingAssistantOpen = false;
+    let pendingAssistantWhen: Date = new Date();
     const flushAssistant = () => {
       if (!pendingAssistantOpen) return;
-      const buf = this.startAssistantBuffer();
+      const buf = this.startAssistantBuffer(pendingAssistantWhen);
       buf.text = pendingAssistantText;
       this.flushAssistantRender(buf);
       pendingAssistantText = "";
@@ -534,21 +537,23 @@ export class ClaudeForObsidianView extends ItemView {
       } catch {
         continue;
       }
+      const when = typeof evt.timestamp === "string" ? new Date(evt.timestamp) : new Date();
       if (evt.type === "user" && evt.message) {
         flushAssistant();
         const content = evt.message.content;
         if (typeof content === "string") {
-          this.appendUserBlock(content);
+          this.appendUserBlock(content, when);
         } else if (Array.isArray(content)) {
           const texts = content
             .filter((b: any) => b?.type === "text" && typeof b.text === "string")
             .map((b: any) => b.text)
             .join("\n");
-          if (texts) this.appendUserBlock(texts);
+          if (texts) this.appendUserBlock(texts, when);
         }
         continue;
       }
       if (evt.type === "assistant" && evt.message?.content) {
+        if (!pendingAssistantOpen) pendingAssistantWhen = when;
         for (const block of evt.message.content) {
           if (block.type === "text" && typeof block.text === "string") {
             if (!pendingAssistantOpen) pendingAssistantOpen = true;
@@ -584,6 +589,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.plugin.saveSettings();
     this.outputEl.empty();
     this.sessionTokensUsed = 0;
+    this.lastDateKey = null;
     this.renderUsage();
     this.refreshChatTitle();
     this.clearStatus();
@@ -669,15 +675,36 @@ export class ClaudeForObsidianView extends ItemView {
     return fs.existsSync(candidate) ? candidate : null;
   }
 
-  private appendUserBlock(text: string): void {
+  private dateKey(d: Date): string {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+
+  private formatHM(d: Date): string {
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+
+  private maybeAppendDateDivider(d: Date): void {
+    const key = this.dateKey(d);
+    if (this.lastDateKey === key) return;
+    this.lastDateKey = key;
+    const divider = this.outputEl.createDiv({ cls: "cfo-date-divider" });
+    const inner = divider.createSpan({ cls: "cfo-date-divider-text" });
+    this.renderMarkdownInto(`[[${key}]]`, inner);
+  }
+
+  private appendUserBlock(text: string, when: Date = new Date()): void {
+    this.maybeAppendDateDivider(when);
     const block = this.outputEl.createDiv({ cls: "cfo-message cfo-message-user" });
-    block.createDiv({ cls: "cfo-message-role", text: "You" });
+    const role = block.createDiv({ cls: "cfo-message-role" });
+    role.createSpan({ cls: "cfo-message-role-label", text: "You" });
+    role.createSpan({ cls: "cfo-message-time", text: this.formatHM(when) });
     const body = block.createDiv({ cls: "cfo-message-body" });
     this.renderMarkdownInto(text, body);
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
   }
 
-  private startAssistantBuffer(): AssistantBuffer {
+  private startAssistantBuffer(when: Date = new Date()): AssistantBuffer {
+    this.maybeAppendDateDivider(when);
     const containerEl = this.outputEl.createDiv({ cls: "cfo-message cfo-message-assistant" });
     containerEl.createDiv({ cls: "cfo-message-role", text: "Claude" });
     const bodyEl = containerEl.createDiv({ cls: "cfo-message-body" });

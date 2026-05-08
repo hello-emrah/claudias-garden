@@ -123,11 +123,48 @@
 }
 
 .cfo-message-role {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   font-weight: 600;
   font-size: var(--font-ui-smaller);
   text-transform: uppercase;
   color: var(--text-muted);
   margin-bottom: 4px;
+}
+
+.cfo-message-time {
+  font-weight: 400;
+  font-size: var(--font-ui-smaller);
+  text-transform: none;
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+}
+
+.cfo-date-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 12px 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.cfo-date-divider::before,
+.cfo-date-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--background-modifier-border);
+}
+
+.cfo-date-divider-text {
+  flex: 0 0 auto;
+}
+
+.cfo-date-divider-text p {
+  margin: 0;
 }
 
 .cfo-message-tool {
