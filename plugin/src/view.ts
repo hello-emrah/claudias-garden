@@ -49,6 +49,7 @@ export class ClaudeForObsidianView extends ItemView {
   private statusEl!: HTMLDivElement;
   private usageEl!: HTMLDivElement;
   private cwdBannerEl!: HTMLDivElement;
+  private chatTitleEl!: HTMLDivElement;
   private sendStopBtn!: HTMLButtonElement;
   private currentRun: ClaudeRun | null = null;
   private currentAssistant: AssistantBuffer | null = null;
@@ -80,6 +81,8 @@ export class ClaudeForObsidianView extends ItemView {
     const headerRow = root.createDiv({ cls: "cfo-header-row" });
     this.cwdBannerEl = headerRow.createDiv({ cls: "cfo-cwd-banner" });
     this.refreshCwdBanner();
+    this.chatTitleEl = headerRow.createDiv({ cls: "cfo-chat-title" });
+    this.refreshChatTitle();
     headerRow.createDiv({ cls: "cfo-header-spacer" });
     const historyBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
     setIcon(historyBtn, "clock");
@@ -160,6 +163,43 @@ export class ClaudeForObsidianView extends ItemView {
   private refreshCwdBanner(): void {
     if (!this.cwdBannerEl) return;
     this.cwdBannerEl.setText(this.vaultName());
+  }
+
+  private refreshChatTitle(): void {
+    if (!this.chatTitleEl) return;
+    const id = this.activeSessionId;
+    if (!id) {
+      this.chatTitleEl.setText("New chat");
+      this.chatTitleEl.toggleClass("cfo-chat-title-empty", true);
+      return;
+    }
+    this.chatTitleEl.toggleClass("cfo-chat-title-empty", false);
+    const custom = this.plugin.settings.sessionLabels[id];
+    if (custom) {
+      this.chatTitleEl.setText(custom);
+      return;
+    }
+    // Look up first user message from the jsonl on demand.
+    const filePath = this.findSessionFile(id);
+    if (!filePath) {
+      this.chatTitleEl.setText("(untitled)");
+      return;
+    }
+    try {
+      const lines = fs.readFileSync(filePath, "utf8").split("\n").slice(0, 50);
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (evt.type === "user" && typeof evt.message?.content === "string") {
+            const t = evt.message.content;
+            this.chatTitleEl.setText(t.length > 60 ? t.slice(0, 60) + "…" : t);
+            return;
+          }
+        } catch {}
+      }
+    } catch {}
+    this.chatTitleEl.setText("(untitled)");
   }
 
   private projectsRoot(): string {
@@ -289,8 +329,9 @@ export class ClaudeForObsidianView extends ItemView {
         trashBtn.onclick = (e) => {
           e.stopPropagation();
           this.confirmDelete(s.id, () => {
-            popup.remove();
-            this.openHistoryMenu(evt);
+            const idx = sessions.indexOf(s);
+            if (idx >= 0) sessions.splice(idx, 1);
+            render(searchInput.value);
           });
         };
 
@@ -353,6 +394,7 @@ export class ClaudeForObsidianView extends ItemView {
       newLabel.className = "cfo-history-label";
       newLabel.textContent = next || row.dataset.fallbackLabel || "(untitled)";
       input.replaceWith(newLabel);
+      this.notifyRename(id);
     };
 
     input.addEventListener("blur", commit);
@@ -393,6 +435,11 @@ export class ClaudeForObsidianView extends ItemView {
     after();
   }
 
+  // Refresh chat title when a rename commits.
+  private notifyRename(id: string): void {
+    if (id === this.activeSessionId) this.refreshChatTitle();
+  }
+
   private switchToSession(id: string): void {
     if (this.currentRun) {
       new Notice("Cannot switch chats while a run is in progress.");
@@ -405,6 +452,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.sessionTokensUsed = 0;
     this.renderUsage();
     this.replaySession(id);
+    this.refreshChatTitle();
     this.statusEl.setText(`Switched to session ${id}.`);
   }
 
@@ -486,6 +534,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.outputEl.empty();
     this.sessionTokensUsed = 0;
     this.renderUsage();
+    this.refreshChatTitle();
     this.statusEl.setText("New chat. Send a message to begin.");
   }
 
@@ -766,6 +815,7 @@ export class ClaudeForObsidianView extends ItemView {
         this.activeSessionId = sid;
         this.plugin.settings.activeSessionId = sid;
         this.plugin.saveSettings();
+        this.refreshChatTitle();
         this.statusEl.setText(isResume ? `Resumed session.` : `Session ${sid} started.`);
         break;
       }

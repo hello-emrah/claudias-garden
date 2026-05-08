@@ -61,8 +61,25 @@
   -webkit-user-select: text;
 }
 
-.cfo-header-spacer {
+.cfo-chat-title {
   flex: 1 1 auto;
+  text-align: center;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 8px;
+  min-width: 0;
+}
+
+.cfo-chat-title-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.cfo-header-spacer {
+  display: none;
 }
 
 .cfo-header-btn {
