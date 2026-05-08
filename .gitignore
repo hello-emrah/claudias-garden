@@ -6,11 +6,8 @@ node_modules/
 plugin/main.js
 plugin/data.json
 
-# Dev vault: Obsidian writes per-machine config and workspace state here
-dev-vault/.obsidian/workspace*
-dev-vault/.obsidian/cache
-dev-vault/.obsidian/community-plugins.json
-dev-vault/.obsidian/plugins/
+# Dev vault is per-developer scratch space; not tracked. See README.
+dev-vault/
 
 # Claude CLI session store, if it ever leaks into the tree
 .claude/projects/
