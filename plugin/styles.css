@@ -1,9 +1,10 @@
-.cfo-view {
+.claude-for-obsidian-view {
   display: flex;
   flex-direction: column;
   height: 100%;
   padding: 8px;
   gap: 8px;
+  min-height: 0;
 }
 
 .cfo-output {
@@ -133,7 +134,50 @@
 }
 
 .cfo-message-body pre {
+  position: relative;
   margin: 0.5em 0;
+  padding: 10px 12px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.cfo-message-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: var(--font-ui-smaller);
+}
+
+.cfo-message-body :not(pre) > code {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+
+.cfo-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  font-size: var(--font-ui-smaller);
+  background: var(--background-modifier-hover);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+}
+
+.cfo-message-body pre:hover .cfo-copy-btn {
+  opacity: 1;
+}
+
+.cfo-copy-btn-copied {
+  opacity: 1 !important;
+  color: var(--text-success);
 }
 
 .cfo-message-user .cfo-message-body {
