@@ -392,6 +392,33 @@ export class ClaudeForObsidianView extends ItemView {
   private renderMarkdownInto(markdown: string, el: HTMLElement): void {
     el.empty();
     MarkdownRenderer.render(this.app, markdown, el, this.resolveCwd(), this.renderComponent);
+    this.bindInternalLinks(el);
+  }
+
+  private bindInternalLinks(el: HTMLElement): void {
+    const links = el.querySelectorAll("a.internal-link");
+    links.forEach((node) => {
+      const a = node as HTMLAnchorElement;
+      if (a.dataset.cfoBound === "1") return;
+      a.dataset.cfoBound = "1";
+      const linkText = a.getAttr("href") || a.getAttr("data-href") || a.textContent || "";
+      a.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        const newLeaf = (evt as MouseEvent).metaKey || (evt as MouseEvent).ctrlKey;
+        this.app.workspace.openLinkText(linkText, this.resolveCwd(), newLeaf);
+      });
+      a.addEventListener("mouseover", (evt) => {
+        this.app.workspace.trigger("hover-link", {
+          event: evt,
+          source: "claude-for-obsidian",
+          hoverParent: this.renderComponent,
+          targetEl: a,
+          linktext: linkText,
+          sourcePath: "",
+        });
+      });
+    });
   }
 
   private appendToolUse(name: string, input: any): void {
