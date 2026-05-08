@@ -56,6 +56,7 @@ export class ClaudeForObsidianView extends ItemView {
   private renderComponent: Component = new Component();
   private sessionTokensUsed = 0;
   private activeSessionId: string | null = null;
+  private pendingTitle: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeForObsidianPlugin) {
     super(leaf);
@@ -107,6 +108,7 @@ export class ClaudeForObsidianView extends ItemView {
       this.replaySession(this.activeSessionId);
       this.statusEl.setText(`Continuing session ${this.activeSessionId}.`);
     }
+    this.refreshChatTitle();
 
     const inputRow = root.createDiv({ cls: "cfo-input-row" });
     this.inputEl = inputRow.createEl("textarea", { cls: "cfo-input" });
@@ -169,8 +171,13 @@ export class ClaudeForObsidianView extends ItemView {
     if (!this.chatTitleEl) return;
     const id = this.activeSessionId;
     if (!id) {
-      this.chatTitleEl.setText("New chat");
-      this.chatTitleEl.toggleClass("cfo-chat-title-empty", true);
+      if (this.pendingTitle) {
+        this.chatTitleEl.setText(this.pendingTitle);
+        this.chatTitleEl.toggleClass("cfo-chat-title-empty", false);
+      } else {
+        this.chatTitleEl.setText("New chat");
+        this.chatTitleEl.toggleClass("cfo-chat-title-empty", true);
+      }
       return;
     }
     this.chatTitleEl.toggleClass("cfo-chat-title-empty", false);
@@ -181,24 +188,28 @@ export class ClaudeForObsidianView extends ItemView {
     }
     // Look up first user message from the jsonl on demand.
     const filePath = this.findSessionFile(id);
-    if (!filePath) {
-      this.chatTitleEl.setText("(untitled)");
+    if (filePath) {
+      try {
+        const lines = fs.readFileSync(filePath, "utf8").split("\n").slice(0, 50);
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === "user" && typeof evt.message?.content === "string") {
+              const t = evt.message.content;
+              this.chatTitleEl.setText(t.length > 60 ? t.slice(0, 60) + "…" : t);
+              return;
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+    // Fall back to pendingTitle (captured at send time) if jsonl hasn't
+    // flushed the user message yet.
+    if (this.pendingTitle) {
+      this.chatTitleEl.setText(this.pendingTitle);
       return;
     }
-    try {
-      const lines = fs.readFileSync(filePath, "utf8").split("\n").slice(0, 50);
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const evt = JSON.parse(line);
-          if (evt.type === "user" && typeof evt.message?.content === "string") {
-            const t = evt.message.content;
-            this.chatTitleEl.setText(t.length > 60 ? t.slice(0, 60) + "…" : t);
-            return;
-          }
-        } catch {}
-      }
-    } catch {}
     this.chatTitleEl.setText("(untitled)");
   }
 
@@ -446,6 +457,7 @@ export class ClaudeForObsidianView extends ItemView {
       return;
     }
     this.activeSessionId = id;
+    this.pendingTitle = null;
     this.plugin.settings.activeSessionId = id;
     this.plugin.saveSettings();
     this.outputEl.empty();
@@ -530,6 +542,7 @@ export class ClaudeForObsidianView extends ItemView {
     }
     this.activeSessionId = null;
     this.plugin.settings.activeSessionId = null;
+    this.pendingTitle = null;
     this.plugin.saveSettings();
     this.outputEl.empty();
     this.sessionTokensUsed = 0;
@@ -743,6 +756,10 @@ export class ClaudeForObsidianView extends ItemView {
     }
 
     this.appendUserBlock(prompt);
+    if (!this.activeSessionId) {
+      this.pendingTitle = prompt.length > 60 ? prompt.slice(0, 60) + "…" : prompt;
+      this.refreshChatTitle();
+    }
     this.inputEl.value = "";
     this.autosizeInput();
     this.currentAssistant = null;
