@@ -5,12 +5,14 @@ export interface ClaudeForObsidianSettings {
   claudeBinaryPath: string;
   model: string;
   permissionMode: "acceptEdits" | "default" | "plan" | "bypassPermissions";
+  activeSessionId: string | null;
 }
 
 export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
   claudeBinaryPath: "/opt/homebrew/bin/claude",
   model: "",
   permissionMode: "acceptEdits",
+  activeSessionId: null,
 };
 
 export class ClaudeForObsidianSettingTab extends PluginSettingTab {

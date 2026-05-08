@@ -15,6 +15,7 @@ export interface RunOptions {
   prompt: string;
   cwd: string;
   settings: ClaudeForObsidianSettings;
+  resumeSessionId?: string | null;
   onEvent: (event: StreamEvent) => void;
 }
 
@@ -35,6 +36,9 @@ export class ClaudeRun {
     ];
     if (this.opts.settings.model) {
       args.push("--model", this.opts.settings.model);
+    }
+    if (this.opts.resumeSessionId) {
+      args.push("--resume", this.opts.resumeSessionId);
     }
 
     const env = { ...process.env };

@@ -27,6 +27,7 @@ export class ClaudeForObsidianView extends ItemView {
   private currentAssistant: AssistantBuffer | null = null;
   private renderComponent: Component = new Component();
   private sessionTokensUsed = 0;
+  private activeSessionId: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeForObsidianPlugin) {
     super(leaf);
@@ -56,6 +57,11 @@ export class ClaudeForObsidianView extends ItemView {
     this.statusEl = root.createDiv({ cls: "cfo-status", text: "Idle." });
     this.usageEl = root.createDiv({ cls: "cfo-usage" });
     this.renderUsage();
+
+    this.activeSessionId = this.plugin.settings.activeSessionId ?? null;
+    if (this.activeSessionId) {
+      this.statusEl.setText(`Continuing session ${this.activeSessionId}.`);
+    }
 
     const inputRow = root.createDiv({ cls: "cfo-input-row" });
     this.inputEl = inputRow.createEl("textarea", { cls: "cfo-input" });
@@ -187,6 +193,7 @@ export class ClaudeForObsidianView extends ItemView {
       prompt,
       cwd,
       settings: this.plugin.settings,
+      resumeSessionId: this.activeSessionId,
       onEvent: (e) => this.handleEvent(e),
     });
     this.currentRun = run;
@@ -231,9 +238,16 @@ export class ClaudeForObsidianView extends ItemView {
 
   private handleEvent(e: StreamEvent): void {
     switch (e.kind) {
-      case "system":
-        this.statusEl.setText(`Session ${e.raw.session_id ?? ""} started.`);
+      case "system": {
+        const sid = e.raw.session_id ?? null;
+        if (!sid) break;
+        const isResume = !!this.activeSessionId;
+        this.activeSessionId = sid;
+        this.plugin.settings.activeSessionId = sid;
+        this.plugin.saveSettings();
+        this.statusEl.setText(isResume ? `Resumed session.` : `Session ${sid} started.`);
         break;
+      }
       case "assistant-text":
         if (!this.currentAssistant) {
           this.currentAssistant = this.startAssistantBuffer();
