@@ -196,8 +196,7 @@ export class ClaudeForObsidianView extends ItemView {
           try {
             const evt = JSON.parse(line);
             if (evt.type === "user" && typeof evt.message?.content === "string") {
-              const t = evt.message.content;
-              this.chatTitleEl.setText(t.length > 60 ? t.slice(0, 60) + "…" : t);
+              this.chatTitleEl.setText(evt.message.content);
               return;
             }
           } catch {}
@@ -757,7 +756,7 @@ export class ClaudeForObsidianView extends ItemView {
 
     this.appendUserBlock(prompt);
     if (!this.activeSessionId) {
-      this.pendingTitle = prompt.length > 60 ? prompt.slice(0, 60) + "…" : prompt;
+      this.pendingTitle = prompt;
       this.refreshChatTitle();
     }
     this.inputEl.value = "";
