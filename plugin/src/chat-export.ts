@@ -54,6 +54,7 @@ export function exportSession(opts: {
   let totalTokens = 0;
   let totalDurationMs = 0;
   let createdISO = "";
+  const datesSeen: Set<string> = new Set();
 
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
@@ -66,6 +67,10 @@ export function exportSession(opts: {
 
     if (typeof evt.sessionId === "string" && !sessionId) sessionId = evt.sessionId;
     if (typeof evt.timestamp === "string" && !createdISO) createdISO = evt.timestamp;
+    if (typeof evt.timestamp === "string") {
+      const d = evt.timestamp.slice(0, 10);
+      if (d) datesSeen.add(d);
+    }
 
     if (evt.type === "user" && evt.message?.content) {
       const content = evt.message.content;
@@ -154,14 +159,11 @@ export function exportSession(opts: {
     ? `Claude Chat ${created} ${stamp} ${slug}.md`
     : `Claude Chat ${created} ${stamp}.md`;
 
+  const dateRange = Array.from(datesSeen).sort().reverse();
   const body = renderBody({
     turns,
     toolResultsById,
-    sessionId,
-    cwd: opts.cwd,
-    created,
-    durationS: Math.round(totalDurationMs / 1000),
-    totalTokens,
+    dateRange,
   });
 
   return { filename, body };
@@ -170,50 +172,63 @@ export function exportSession(opts: {
 function renderBody(args: {
   turns: Turn[];
   toolResultsById: Map<string, ToolResult>;
-  sessionId: string;
-  cwd: string;
-  created: string;
-  durationS: number;
-  totalTokens: number;
+  dateRange: string[];
 }): string {
   const front = [
     "---",
-    "type: chat",
-    `session_id: ${args.sessionId}`,
-    `cwd: ${args.cwd}`,
-    `created: ${args.created}`,
-    `duration_s: ${args.durationS}`,
-    `total_tokens: ${args.totalTokens}`,
+    "doctype: chat-transcript",
+    "agent: Claude",
+    "date_range:",
+    ...args.dateRange.map((d) => `  - "[[${d}]]"`),
     "---",
     "",
   ].join("\n");
 
   // Group consecutive assistant turns under a single heading.
+  // Tool calls intentionally omitted from the prose-only export.
   const sections: string[] = [];
   let i = 0;
   while (i < args.turns.length) {
     const t = args.turns[i];
     if (t.role === "user") {
-      sections.push(`## You — ${formatTime(t.timestamp)}\n\n${demoteHeadings(t.text.trim())}\n`);
+      sections.push(`## ${formatTime(t.timestamp)} - You\n\n${wrapUserContent(t.text.trim())}\n`);
       i++;
       continue;
     }
-    // Assistant turn: collect contiguous assistant events into one section.
     const parts: string[] = [];
     const headingTime = formatTime(t.timestamp);
     while (i < args.turns.length && args.turns[i].role === "assistant") {
       const at = args.turns[i];
       if (at.text.trim()) parts.push(demoteHeadings(at.text.trim()));
-      for (const tool of at.toolUses) {
-        const result = args.toolResultsById.get(tool.id);
-        parts.push(renderToolBlock(tool, result));
-      }
       i++;
     }
-    sections.push(`## Claude — ${headingTime}\n\n${parts.join("\n\n")}\n`);
+    sections.push(`## ${headingTime} - Claude\n\n${parts.join("\n\n")}\n`);
   }
 
   return front + sections.join("\n");
+}
+
+// Smart fence: keep prose with wikilinks rendering live; only fence-wrap
+// when the body shows signs of having been pasted from elsewhere and
+// could break the markdown cascade.
+function wrapUserContent(body: string): string {
+  if (looksDangerous(body)) {
+    let longest = 0;
+    const matches = body.match(/`+/g);
+    if (matches) for (const m of matches) if (m.length > longest) longest = m.length;
+    const fence = "`".repeat(Math.max(3, longest + 1));
+    return `${fence}markdown\n${body}\n${fence}`;
+  }
+  return demoteHeadings(body);
+}
+
+function looksDangerous(body: string): boolean {
+  if (/<[a-zA-Z][\w-]*(?:\s|>|\/)/.test(body)) return true;
+  const fenceCount = (body.match(/^```/gm) || []).length;
+  if (fenceCount % 2 !== 0) return true;
+  if (/\S{300,}/.test(body)) return true;
+  if (body.length > 4000) return true;
+  return false;
 }
 
 // Speaker headings are H2. Anything inside a message must start at H3 or deeper.
