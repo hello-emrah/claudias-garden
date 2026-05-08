@@ -194,7 +194,7 @@ function renderBody(args: {
   while (i < args.turns.length) {
     const t = args.turns[i];
     if (t.role === "user") {
-      sections.push(`## You — ${formatTime(t.timestamp)}\n\n${t.text.trim()}\n`);
+      sections.push(`## You — ${formatTime(t.timestamp)}\n\n${demoteHeadings(t.text.trim())}\n`);
       i++;
       continue;
     }
@@ -203,7 +203,7 @@ function renderBody(args: {
     const headingTime = formatTime(t.timestamp);
     while (i < args.turns.length && args.turns[i].role === "assistant") {
       const at = args.turns[i];
-      if (at.text.trim()) parts.push(at.text.trim());
+      if (at.text.trim()) parts.push(demoteHeadings(at.text.trim()));
       for (const tool of at.toolUses) {
         const result = args.toolResultsById.get(tool.id);
         parts.push(renderToolBlock(tool, result));
@@ -214,6 +214,24 @@ function renderBody(args: {
   }
 
   return front + sections.join("\n");
+}
+
+// Speaker headings are H2. Anything inside a message must start at H3 or deeper.
+// Find the shallowest heading in the body and shift everything so it lands at H3.
+// Cap at H6 (Obsidian's max).
+function demoteHeadings(body: string): string {
+  const headingRe = /^(#{1,6})\s+/gm;
+  let shallowest = 7;
+  for (const m of body.matchAll(headingRe)) {
+    const level = m[1].length;
+    if (level < shallowest) shallowest = level;
+  }
+  if (shallowest >= 3 || shallowest === 7) return body;
+  const shift = 3 - shallowest;
+  return body.replace(headingRe, (_, hashes: string) => {
+    const newLevel = Math.min(6, hashes.length + shift);
+    return "#".repeat(newLevel) + " ";
+  });
 }
 
 function renderToolBlock(tool: ToolUse, result: ToolResult | undefined): string {
