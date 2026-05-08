@@ -26,7 +26,14 @@
   -webkit-user-select: text;
 }
 
+.cfo-header-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .cfo-cwd-banner {
+  flex: 1;
   font-family: var(--font-monospace);
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
@@ -35,6 +42,13 @@
   border-radius: 4px;
   user-select: text;
   -webkit-user-select: text;
+}
+
+.cfo-history-btn {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
 }
 
 .cfo-message {

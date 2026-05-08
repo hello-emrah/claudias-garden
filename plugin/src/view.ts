@@ -1,6 +1,15 @@
-import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, Menu } from "obsidian";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 import { ClaudeRun, StreamEvent } from "./claude-client";
 import type ClaudeForObsidianPlugin from "./main";
+
+interface SessionSummary {
+  id: string;
+  label: string;
+  timestamp: number;
+}
 
 export const CLAUDE_FOR_OBSIDIAN_VIEW = "claude-for-obsidian-view";
 
@@ -50,8 +59,12 @@ export class ClaudeForObsidianView extends ItemView {
     root.empty();
     root.addClass("claude-for-obsidian-view");
 
-    this.cwdBannerEl = root.createDiv({ cls: "cfo-cwd-banner" });
+    const headerRow = root.createDiv({ cls: "cfo-header-row" });
+    this.cwdBannerEl = headerRow.createDiv({ cls: "cfo-cwd-banner" });
     this.refreshCwdBanner();
+    const historyBtn = headerRow.createEl("button", { cls: "cfo-history-btn", text: "🕒" });
+    historyBtn.title = "Recent chats in this vault";
+    historyBtn.onclick = (evt) => this.openHistoryMenu(evt);
 
     this.outputEl = root.createDiv({ cls: "cfo-output" });
     this.statusEl = root.createDiv({ cls: "cfo-status", text: "Idle." });
@@ -118,6 +131,91 @@ export class ClaudeForObsidianView extends ItemView {
   private refreshCwdBanner(): void {
     if (!this.cwdBannerEl) return;
     this.cwdBannerEl.setText(`vault: ${this.vaultName()}  ·  ${this.resolveCwd()}`);
+  }
+
+  private cliProjectDir(): string {
+    const cwd = this.resolveCwd();
+    const encoded = cwd.replace(/\//g, "-");
+    return path.join(os.homedir(), ".claude", "projects", encoded);
+  }
+
+  private listSessions(): SessionSummary[] {
+    const dir = this.cliProjectDir();
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      return [];
+    }
+    const summaries: SessionSummary[] = [];
+    for (const file of entries) {
+      const fullPath = path.join(dir, file);
+      const id = file.replace(/\.jsonl$/, "");
+      let label = "(empty)";
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(fullPath);
+      } catch {
+        continue;
+      }
+      try {
+        const head = fs.readFileSync(fullPath, "utf8").split("\n").slice(0, 50);
+        for (const line of head) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === "user" && typeof evt.message?.content === "string") {
+              label = evt.message.content;
+              break;
+            }
+            if (evt.type === "queue-operation" && typeof evt.content === "string") {
+              label = evt.content;
+              break;
+            }
+          } catch {
+            // skip malformed line
+          }
+        }
+      } catch {
+        // unreadable file; keep default label
+      }
+      const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
+      summaries.push({ id, label: truncated, timestamp: stat.mtimeMs });
+    }
+    summaries.sort((a, b) => b.timestamp - a.timestamp);
+    return summaries;
+  }
+
+  private openHistoryMenu(evt: MouseEvent): void {
+    const menu = new Menu();
+    const sessions = this.listSessions();
+    if (sessions.length === 0) {
+      menu.addItem((item) => item.setTitle("No recent chats").setDisabled(true));
+    } else {
+      for (const s of sessions) {
+        menu.addItem((item) =>
+          item
+            .setTitle(s.label || s.id)
+            .setChecked(s.id === this.activeSessionId)
+            .onClick(() => this.switchToSession(s.id))
+        );
+      }
+    }
+    menu.showAtMouseEvent(evt);
+  }
+
+  private switchToSession(id: string): void {
+    if (this.currentRun) {
+      new Notice("Cannot switch chats while a run is in progress.");
+      return;
+    }
+    this.activeSessionId = id;
+    this.plugin.settings.activeSessionId = id;
+    this.plugin.saveSettings();
+    this.outputEl.empty();
+    this.sessionTokensUsed = 0;
+    this.renderUsage();
+    this.statusEl.setText(`Switched to session ${id}.`);
   }
 
   private appendUserBlock(text: string): void {
