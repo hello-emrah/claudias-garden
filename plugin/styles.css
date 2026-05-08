@@ -208,18 +208,29 @@
   padding-left: 1.4em;
 }
 
-.cfo-message-body li {
+/* Lists: aggressive flatten of all internal spacing.
+   Obsidian's renderer wraps <li> content in <p>, so target both. */
+.cfo-message-body ul li,
+.cfo-message-body ol li {
   line-height: 1.35;
   margin: 0 !important;
-  padding: 0;
+  padding: 0 !important;
 }
 
-.cfo-message-body li > p {
+.cfo-message-body ul li > p,
+.cfo-message-body ol li > p,
+.cfo-message-body ul li > p:first-child,
+.cfo-message-body ol li > p:first-child,
+.cfo-message-body ul li > p:last-child,
+.cfo-message-body ol li > p:last-child {
   margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.35 !important;
 }
 
-.cfo-message-body li + li {
-  margin-top: 0.1em !important;
+.cfo-message-body ul li + li,
+.cfo-message-body ol li + li {
+  margin-top: 0.15em !important;
 }
 
 .cfo-message-body blockquote {
@@ -233,6 +244,17 @@
 
 .cfo-message-body > * + * {
   margin-top: 0.3em;
+}
+
+/* Tool blocks: a bit of breathing room between tool output
+   and the assistant prose that follows. */
+.cfo-message-tool {
+  margin: 0.4em 0 !important;
+}
+
+.cfo-message-tool + p,
+p + .cfo-message-tool {
+  margin-top: 0.5em !important;
 }
 
 .cfo-message-body pre {
