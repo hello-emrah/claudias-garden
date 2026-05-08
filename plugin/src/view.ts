@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, Menu, TFile, normalizePath } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, Menu, TFile, normalizePath, setIcon } from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -62,16 +62,21 @@ export class ClaudeForObsidianView extends ItemView {
     const headerRow = root.createDiv({ cls: "cfo-header-row" });
     this.cwdBannerEl = headerRow.createDiv({ cls: "cfo-cwd-banner" });
     this.refreshCwdBanner();
-    const historyBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "🕒" });
+    headerRow.createDiv({ cls: "cfo-header-spacer" });
+    const historyBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
+    setIcon(historyBtn, "clock");
     historyBtn.title = "Recent chats in this vault";
     historyBtn.onclick = (evt) => this.openHistoryMenu(evt);
-    const newBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "＋" });
+    const newBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
+    setIcon(newBtn, "plus");
     newBtn.title = "New chat";
     newBtn.onclick = () => this.newChat();
-    const deleteBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "🗑" });
+    const deleteBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
+    setIcon(deleteBtn, "trash-2");
     deleteBtn.title = "Delete current chat";
     deleteBtn.onclick = () => this.deleteCurrentChat();
-    const saveBtn = headerRow.createEl("button", { cls: "cfo-header-btn", text: "⬇" });
+    const saveBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
+    setIcon(saveBtn, "download");
     saveBtn.title = "Save chat to vault";
     saveBtn.onclick = () => this.saveChatToVault();
 
@@ -91,7 +96,8 @@ export class ClaudeForObsidianView extends ItemView {
     this.inputEl.rows = 1;
     this.autosizeInput();
 
-    this.sendStopBtn = inputRow.createEl("button", { cls: "cfo-send-stop-btn", text: "↑" });
+    this.sendStopBtn = inputRow.createEl("button", { cls: "cfo-send-stop-btn" });
+    setIcon(this.sendStopBtn, "arrow-up");
     this.sendStopBtn.title = "Send (Cmd-Enter)";
     this.sendStopBtn.onclick = () => this.toggleSendStop();
     this.inputEl.addEventListener("input", () => this.autosizeInput());
@@ -527,7 +533,8 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private setBusy(busy: boolean): void {
-    this.sendStopBtn.setText(busy ? "⏹" : "↑");
+    this.sendStopBtn.empty();
+    setIcon(this.sendStopBtn, busy ? "square" : "arrow-up");
     this.sendStopBtn.title = busy ? "Stop (Esc)" : "Send (Cmd-Enter)";
     this.sendStopBtn.toggleClass("cfo-send-stop-btn-busy", busy);
   }

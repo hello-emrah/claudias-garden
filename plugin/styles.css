@@ -14,9 +14,8 @@
   font-size: var(--font-ui-small);
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 8px;
-  background: var(--background-secondary);
-  border-radius: 6px;
+  padding: 8px 8px 80px 8px;
+  background: transparent;
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
@@ -27,29 +26,70 @@
   -webkit-user-select: text;
 }
 
+/* Slim, transparent-track scrollbar */
+.cfo-output::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cfo-output::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cfo-output::-webkit-scrollbar-thumb {
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+}
+
+.cfo-output::-webkit-scrollbar-thumb:hover {
+  background: var(--background-modifier-border-hover);
+}
+
 .cfo-header-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .cfo-cwd-banner {
-  flex: 1;
+  flex: 0 0 auto;
   font-family: var(--font-monospace);
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
-  padding: 4px 6px;
+  padding: 2px 8px;
   background: var(--background-modifier-hover);
   border-radius: 4px;
   user-select: text;
   -webkit-user-select: text;
 }
 
+.cfo-header-spacer {
+  flex: 1 1 auto;
+}
+
 .cfo-header-btn {
   flex: 0 0 auto;
-  padding: 4px 8px;
-  font-size: var(--font-ui-small);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
   cursor: pointer;
+  border-radius: 4px;
+}
+
+.cfo-header-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+  box-shadow: none;
+}
+
+.cfo-header-btn .svg-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .cfo-message {
@@ -76,23 +116,37 @@
   margin: 4px 0;
 }
 
+/* Floating input row */
 .cfo-input-row {
+  position: sticky;
+  bottom: 0;
   display: flex;
   gap: 6px;
   align-items: flex-end;
+  padding: 8px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  margin-top: -36px;
 }
 
 .cfo-send-stop-btn {
   flex: 0 0 auto;
   align-self: flex-end;
-  padding: 6px 10px;
-  font-size: var(--font-ui-medium);
-  cursor: pointer;
-  min-width: 36px;
-  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.cfo-send-stop-btn .svg-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .cfo-send-stop-btn-busy {
@@ -107,14 +161,17 @@
   height: auto;
   overflow-y: hidden;
   font-family: var(--font-text);
+  font-size: var(--font-ui-small);
   line-height: 1.4;
   padding: 6px 8px;
+  background: transparent;
+  border: none;
+  outline: none;
 }
 
-.cfo-btn-col {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.cfo-input:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 .cfo-message-body {
@@ -129,8 +186,34 @@
   margin-bottom: 0;
 }
 
+/* Tighter spacing throughout message bodies */
 .cfo-message-body p {
-  margin: 0.4em 0;
+  margin: 0.3em 0;
+}
+
+.cfo-message-body h1,
+.cfo-message-body h2,
+.cfo-message-body h3,
+.cfo-message-body h4,
+.cfo-message-body h5,
+.cfo-message-body h6 {
+  margin: 0.6em 0 0.3em 0;
+  line-height: 1.25;
+}
+
+.cfo-message-body ul,
+.cfo-message-body ol {
+  margin: 0.3em 0;
+  padding-left: 1.4em;
+}
+
+.cfo-message-body li {
+  line-height: 1.35;
+  margin: 0.1em 0;
+}
+
+.cfo-message-body li > p {
+  margin: 0.1em 0;
 }
 
 .cfo-message-body pre {
@@ -142,18 +225,18 @@
   overflow-x: auto;
 }
 
-.cfo-message-body pre code {
-  background: transparent;
-  padding: 0;
-  font-size: var(--font-ui-smaller);
-}
-
 .cfo-message-body pre .copy-code-button {
   position: absolute;
   top: 6px;
   right: 6px;
   bottom: auto;
   left: auto;
+}
+
+.cfo-message-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: var(--font-ui-smaller);
 }
 
 .cfo-message-user .cfo-message-body {
