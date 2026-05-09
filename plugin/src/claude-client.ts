@@ -4,8 +4,8 @@ import type { ClaudeForObsidianSettings } from "./settings";
 export type StreamEvent =
   | { kind: "system"; raw: any }
   | { kind: "assistant-text"; text: string }
-  | { kind: "tool-use"; name: string; input: any }
-  | { kind: "tool-result"; content: string; isError: boolean }
+  | { kind: "tool-use"; id: string | null; name: string; input: any }
+  | { kind: "tool-result"; toolUseId: string | null; content: string; isError: boolean }
   | { kind: "result"; raw: any }
   | { kind: "error"; message: string }
   | { kind: "stderr"; line: string }
@@ -120,7 +120,12 @@ export class ClaudeRun {
         if (block.type === "text") {
           this.opts.onEvent({ kind: "assistant-text", text: block.text });
         } else if (block.type === "tool_use") {
-          this.opts.onEvent({ kind: "tool-use", name: block.name, input: block.input });
+          this.opts.onEvent({
+            kind: "tool-use",
+            id: typeof block.id === "string" ? block.id : null,
+            name: block.name,
+            input: block.input,
+          });
         }
       }
       return;
@@ -133,6 +138,7 @@ export class ClaudeRun {
             : JSON.stringify(block.content);
           this.opts.onEvent({
             kind: "tool-result",
+            toolUseId: typeof block.tool_use_id === "string" ? block.tool_use_id : null,
             content,
             isError: !!block.is_error,
           });

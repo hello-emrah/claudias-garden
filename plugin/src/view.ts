@@ -35,12 +35,37 @@ function relativeTime(ts: number): string {
 
 export const CLAUDE_FOR_OBSIDIAN_VIEW = "claude-for-obsidian-view";
 
+interface ToolGroup {
+  el: HTMLElement;
+  headerEl: HTMLElement;
+  bodyEl: HTMLElement;
+  statusEl: HTMLElement;
+  // Map of tool name → running count, for the rolling header text.
+  runningByName: Map<string, number>;
+  // Total ever-seen names in this group, used for the settled label.
+  seenNames: string[];
+  expanded: boolean;
+}
+
 interface AssistantBuffer {
   containerEl: HTMLDivElement;
   bodyEl: HTMLDivElement;
   text: string;
-  renderTimer: number | null;
+  // Number of characters currently revealed in the rendered DOM.
+  revealedLen: number;
+  // requestAnimationFrame handle for the paced reveal loop.
+  revealRaf: number | null;
+  // Last frame timestamp; null when not running.
+  lastFrameAt: number | null;
 }
+
+// Visible character reveal rate in chars per second. ~720 chars/sec at
+// the base rate; we accelerate when the unrevealed buffer grows so long
+// dumps don't drag, and we slow down when within sight of the end so the
+// reveal lands gently.
+const REVEAL_BASE_CPS = 720;
+const REVEAL_BURST_THRESHOLD = 800;
+const REVEAL_BURST_MULTIPLIER = 3;
 
 const THINKING_VERBS = [
   "Foraging",
@@ -60,7 +85,6 @@ const THINKING_VERBS = [
   "Pottering",
   "Tending",
   "Kindling",
-  "Diving",
   "Casting",
   "Dismantling",
   "Kneading",
@@ -94,11 +118,15 @@ export class ClaudeForObsidianView extends ItemView {
   private renderComponent: Component = new Component();
   private activeSessionId: string | null = null;
   private pendingTitle: string | null = null;
-  private thinkingTimer: number | null = null;
   private sessionTokensUsed = 0;
   private lastStderr: string | null = null;
   private lastDateKey: string | null = null;
   private wikilinkSuggest: WikilinkSuggest | null = null;
+  private pendingTools: Map<string, { el: HTMLElement; startedAt: number; group: ToolGroup }> = new Map();
+  private static readonly TOOL_MIN_VISIBLE_MS = 600;
+  private currentToolGroup: ToolGroup | null = null;
+  private trailingThinkingEl: HTMLElement | null = null;
+  private trailingThinkingTimer: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: ClaudeForObsidianPlugin) {
     super(leaf);
@@ -204,10 +232,7 @@ export class ClaudeForObsidianView extends ItemView {
 
   async onClose(): Promise<void> {
     this.cancel();
-    if (this.thinkingTimer != null) {
-      window.clearInterval(this.thinkingTimer);
-      this.thinkingTimer = null;
-    }
+    this.stopTrailingThinking();
     if (this.wikilinkSuggest) {
       this.wikilinkSuggest.destroy();
       this.wikilinkSuggest = null;
@@ -596,7 +621,8 @@ export class ClaudeForObsidianView extends ItemView {
             pendingAssistantText += block.text;
           } else if (block.type === "tool_use") {
             flushAssistant();
-            this.appendToolUse(block.name, block.input);
+            this.appendToolUse(null, block.name, block.input);
+            // Replays are historical; no running state.
           }
         }
         const usage = evt.message.usage;
@@ -736,6 +762,7 @@ export class ClaudeForObsidianView extends ItemView {
     role.createSpan({ cls: "cfo-message-time", text: this.formatHM(when) });
     const body = block.createDiv({ cls: "cfo-message-body" });
     this.renderMarkdownInto(text, body);
+    this.bumpTrailingThinking();
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
   }
 
@@ -744,24 +771,66 @@ export class ClaudeForObsidianView extends ItemView {
     const containerEl = this.outputEl.createDiv({ cls: "cfo-message cfo-message-assistant" });
     containerEl.createDiv({ cls: "cfo-message-role", text: "Claude" });
     const bodyEl = containerEl.createDiv({ cls: "cfo-message-body" });
+    this.bumpTrailingThinking();
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
-    return { containerEl, bodyEl, text: "", renderTimer: null };
+    return {
+      containerEl,
+      bodyEl,
+      text: "",
+      revealedLen: 0,
+      revealRaf: null,
+      lastFrameAt: null,
+    };
   }
 
+  /**
+   * Paced reveal. Decouples the visual stream from network arrival:
+   * appends to `buf.text` happen as chunks arrive, but the rendered DOM
+   * only shows characters up to `buf.revealedLen`, advanced by a steady
+   * rate per animation frame. Long dumps still arrive smoothly; short
+   * pauses still feel like the agent is typing.
+   */
   private scheduleAssistantRender(buf: AssistantBuffer): void {
-    if (buf.renderTimer != null) return;
-    buf.renderTimer = window.setTimeout(() => {
-      buf.renderTimer = null;
-      this.renderMarkdownInto(buf.text, buf.bodyEl);
+    if (buf.revealRaf != null) return;
+    const tick = (now: number) => {
+      buf.revealRaf = null;
+      const last = buf.lastFrameAt ?? now;
+      const dt = Math.max(0, now - last);
+      buf.lastFrameAt = now;
+
+      const remaining = buf.text.length - buf.revealedLen;
+      if (remaining <= 0) {
+        buf.lastFrameAt = null;
+        return;
+      }
+
+      const rate =
+        remaining > REVEAL_BURST_THRESHOLD
+          ? REVEAL_BASE_CPS * REVEAL_BURST_MULTIPLIER
+          : REVEAL_BASE_CPS;
+      const advance = Math.max(1, Math.floor((rate * dt) / 1000));
+      buf.revealedLen = Math.min(buf.text.length, buf.revealedLen + advance);
+
+      this.renderMarkdownInto(buf.text.slice(0, buf.revealedLen), buf.bodyEl);
+      this.bumpTrailingThinking();
       this.outputEl.scrollTop = this.outputEl.scrollHeight;
-    }, 60);
+
+      if (buf.revealedLen < buf.text.length) {
+        buf.revealRaf = window.requestAnimationFrame(tick);
+      } else {
+        buf.lastFrameAt = null;
+      }
+    };
+    buf.revealRaf = window.requestAnimationFrame(tick);
   }
 
   private flushAssistantRender(buf: AssistantBuffer): void {
-    if (buf.renderTimer != null) {
-      window.clearTimeout(buf.renderTimer);
-      buf.renderTimer = null;
+    if (buf.revealRaf != null) {
+      window.cancelAnimationFrame(buf.revealRaf);
+      buf.revealRaf = null;
     }
+    buf.revealedLen = buf.text.length;
+    buf.lastFrameAt = null;
     this.renderMarkdownInto(buf.text, buf.bodyEl);
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
   }
@@ -822,12 +891,166 @@ export class ClaudeForObsidianView extends ItemView {
     new Notice(`Tag: #${tagName}`);
   }
 
-  private appendToolUse(name: string, input: any): void {
+  private ensureToolGroup(): ToolGroup {
+    if (this.currentToolGroup) return this.currentToolGroup;
+    const el = this.outputEl.createDiv({ cls: "cfo-tool-group cfo-tool-group-running" });
+
+    const headerEl = el.createDiv({ cls: "cfo-tool-group-header" });
+    const chevron = headerEl.createSpan({ cls: "cfo-tool-group-chevron" });
+    setIcon(chevron, "chevron-down");
+    const statusEl = headerEl.createSpan({ cls: "cfo-tool-group-status", text: "Running…" });
+
+    const bodyEl = el.createDiv({ cls: "cfo-tool-group-body" });
+
+    const group: ToolGroup = {
+      el,
+      headerEl,
+      bodyEl,
+      statusEl,
+      runningByName: new Map(),
+      seenNames: [],
+      expanded: false,
+    };
+
+    headerEl.onclick = () => {
+      group.expanded = !group.expanded;
+      group.el.toggleClass("cfo-tool-group-expanded", group.expanded);
+    };
+
+    this.currentToolGroup = group;
+    this.bumpTrailingThinking();
+    return group;
+  }
+
+  private updateToolGroupHeader(group: ToolGroup): void {
+    const runningTotal = Array.from(group.runningByName.values()).reduce((a, b) => a + b, 0);
+    if (runningTotal > 0) {
+      const activeName = [...group.runningByName.entries()].find(([, n]) => n > 0)?.[0];
+      const verb = activeName ? this.toolVerbForName(activeName) : "Running";
+      group.statusEl.setText(`${verb}…`);
+    } else {
+      // All settled.
+      const ranLabel = group.seenNames.length === 1
+        ? `Ran ${this.toolVerbForName(group.seenNames[0]).replace(/ing$/, "")}`
+        : `Ran ${group.seenNames.length} tools`;
+      group.statusEl.setText(ranLabel);
+    }
+  }
+
+  private closeToolGroup(): void {
+    if (!this.currentToolGroup) return;
+    this.currentToolGroup.el.removeClass("cfo-tool-group-running");
+    this.updateToolGroupHeader(this.currentToolGroup);
+    this.currentToolGroup = null;
+  }
+
+  private appendToolUse(id: string | null, name: string, input: any): void {
     const summary = typeof input === "object" ? JSON.stringify(input) : String(input);
     const truncated = summary.length > 240 ? summary.slice(0, 240) + "…" : summary;
-    const el = this.outputEl.createDiv({ cls: "cfo-message-tool" });
-    el.setText(`▸ ${name}  ${truncated}`);
+
+    if (id === null) {
+      // Replay path: render as a flat row outside any live group.
+      const flat = this.outputEl.createDiv({ cls: "cfo-tool-row cfo-tool-row-replay" });
+      flat.createSpan({ cls: "cfo-tool-row-name", text: this.toolVerbForName(name) });
+      flat.createSpan({ cls: "cfo-tool-row-args", text: truncated });
+      this.outputEl.scrollTop = this.outputEl.scrollHeight;
+      return;
+    }
+
+    const group = this.ensureToolGroup();
+    if (!group.seenNames.includes(name)) group.seenNames.push(name);
+    group.runningByName.set(name, (group.runningByName.get(name) ?? 0) + 1);
+
+    const row = group.bodyEl.createDiv({ cls: "cfo-tool-row cfo-tool-row-running" });
+    const dot = row.createSpan({ cls: "cfo-tool-row-dot" });
+    row.createSpan({ cls: "cfo-tool-row-name", text: this.toolVerbForName(name) });
+    row.createSpan({ cls: "cfo-tool-row-args", text: truncated });
+    void dot;
+
+    this.pendingTools.set(id, { el: row, startedAt: Date.now(), group });
+    this.updateToolGroupHeader(group);
+    this.bumpTrailingThinking();
+
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
+  }
+
+  private toolVerbForName(name: string): string {
+    const verbs: Record<string, string> = {
+      Read: "Reading",
+      Write: "Writing",
+      Edit: "Editing",
+      Bash: "Running",
+      Glob: "Searching",
+      Grep: "Searching",
+      Task: "Delegating",
+      WebFetch: "Fetching",
+      WebSearch: "Searching",
+      ToolSearch: "Loading",
+      TodoWrite: "Planning",
+      NotebookEdit: "Editing",
+    };
+    return verbs[name] ?? name;
+  }
+
+  private settleToolResult(id: string | null, isError: boolean): void {
+    if (!id) return;
+    const entry = this.pendingTools.get(id);
+    if (!entry) return;
+    this.pendingTools.delete(id);
+    const elapsed = Date.now() - entry.startedAt;
+    const wait = Math.max(0, ClaudeForObsidianView.TOOL_MIN_VISIBLE_MS - elapsed);
+    const settle = () => {
+      entry.el.removeClass("cfo-tool-row-running");
+      if (isError) entry.el.addClass("cfo-tool-row-error");
+      // Decrement the running counter for this row's tool name. We don't
+      // store the name on the entry, so derive from the row text.
+      const nameEl = entry.el.querySelector(".cfo-tool-row-name");
+      const name = (nameEl?.textContent ?? "").trim();
+      const verb = name;
+      // Find the matching original tool name by reverse lookup of verb→name.
+      const originalName = this.originalNameForVerb(verb);
+      if (originalName) {
+        const remaining = (entry.group.runningByName.get(originalName) ?? 1) - 1;
+        if (remaining <= 0) entry.group.runningByName.delete(originalName);
+        else entry.group.runningByName.set(originalName, remaining);
+      }
+      this.updateToolGroupHeader(entry.group);
+    };
+    if (wait === 0) settle();
+    else window.setTimeout(settle, wait);
+  }
+
+  private settleAllPendingTools(): void {
+    for (const entry of this.pendingTools.values()) {
+      entry.el.removeClass("cfo-tool-row-running");
+    }
+    this.pendingTools.clear();
+    if (this.currentToolGroup) {
+      this.currentToolGroup.runningByName.clear();
+      this.updateToolGroupHeader(this.currentToolGroup);
+      this.closeToolGroup();
+    }
+  }
+
+  private originalNameForVerb(verb: string): string | null {
+    const verbs: Record<string, string> = {
+      Read: "Reading",
+      Write: "Writing",
+      Edit: "Editing",
+      Bash: "Running",
+      Glob: "Searching",
+      Grep: "Searching",
+      Task: "Delegating",
+      WebFetch: "Fetching",
+      WebSearch: "Searching",
+      ToolSearch: "Loading",
+      TodoWrite: "Planning",
+      NotebookEdit: "Editing",
+    };
+    for (const [k, v] of Object.entries(verbs)) {
+      if (v === verb) return k;
+    }
+    return verb;
   }
 
   private send(): void {
@@ -888,30 +1111,65 @@ export class ClaudeForObsidianView extends ItemView {
     this.statusEl.removeClass("cfo-status-thinking");
   }
 
+  /**
+   * Show or hide the trailing thinking indicator. The indicator lives
+   * in the chat stream as the last child of outputEl, trailing whatever
+   * the agent emitted most recently (assistant text buffer, tool group,
+   * tool row). On every new emission, callers run `bumpTrailingThinking`
+   * to push it back to the bottom.
+   */
   private setThinking(thinking: boolean): void {
-    if (!this.statusEl) return;
-    if (this.thinkingTimer != null) {
-      window.clearInterval(this.thinkingTimer);
-      this.thinkingTimer = null;
-    }
     if (!thinking) {
-      this.clearStatus();
+      this.stopTrailingThinking();
       return;
     }
-    this.statusEl.addClass("cfo-status-thinking");
-    this.renderThinkingFrame();
-    this.thinkingTimer = window.setInterval(() => this.renderThinkingFrame(), THINKING_ROTATE_MS);
+    this.startTrailingThinking();
   }
 
-  private renderThinkingFrame(): void {
-    if (!this.statusEl) return;
+  private startTrailingThinking(): void {
+    if (this.trailingThinkingTimer != null) return;
+    if (!this.trailingThinkingEl) {
+      this.trailingThinkingEl = this.outputEl.createDiv({ cls: "cfo-trailing-thinking" });
+    } else {
+      this.bumpTrailingThinking();
+    }
+    this.renderTrailingThinkingFrame();
+    this.trailingThinkingTimer = window.setInterval(
+      () => this.renderTrailingThinkingFrame(),
+      THINKING_ROTATE_MS,
+    );
+  }
+
+  private stopTrailingThinking(): void {
+    if (this.trailingThinkingTimer != null) {
+      window.clearInterval(this.trailingThinkingTimer);
+      this.trailingThinkingTimer = null;
+    }
+    if (this.trailingThinkingEl) {
+      this.trailingThinkingEl.remove();
+      this.trailingThinkingEl = null;
+    }
+  }
+
+  private renderTrailingThinkingFrame(): void {
+    if (!this.trailingThinkingEl) return;
     const verb = THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)];
-    this.statusEl.empty();
-    const dots = this.statusEl.createSpan({ cls: "cfo-thinking-dots" });
+    this.trailingThinkingEl.empty();
+    const dots = this.trailingThinkingEl.createSpan({ cls: "cfo-thinking-dots" });
     dots.createSpan({ cls: "cfo-thinking-dot" });
     dots.createSpan({ cls: "cfo-thinking-dot" });
     dots.createSpan({ cls: "cfo-thinking-dot" });
-    this.statusEl.createSpan({ cls: "cfo-thinking-label", text: verb });
+    this.trailingThinkingEl.createSpan({ cls: "cfo-thinking-label", text: verb });
+  }
+
+  /**
+   * Re-attach the trailing thinking indicator as the last child of
+   * outputEl so it always sits below the most recently emitted block.
+   */
+  private bumpTrailingThinking(): void {
+    if (!this.trailingThinkingEl) return;
+    this.outputEl.appendChild(this.trailingThinkingEl);
+    this.outputEl.scrollTop = this.outputEl.scrollHeight;
   }
 
   private tokensFromUsage(usage: any): number {
@@ -1076,7 +1334,8 @@ export class ClaudeForObsidianView extends ItemView {
         break;
       }
       case "assistant-text":
-        this.setThinking(false);
+        // First text event after a tool group closes the group.
+        if (this.currentToolGroup) this.closeToolGroup();
         if (!this.currentAssistant) {
           this.currentAssistant = this.startAssistantBuffer();
         }
@@ -1084,16 +1343,19 @@ export class ClaudeForObsidianView extends ItemView {
         this.scheduleAssistantRender(this.currentAssistant);
         break;
       case "tool-use":
-        this.setThinking(false);
         if (this.currentAssistant) this.flushAssistantRender(this.currentAssistant);
         this.currentAssistant = null;
-        this.appendToolUse(e.name, e.input);
+        this.appendToolUse(e.id, e.name, e.input);
         break;
       case "tool-result":
+        this.settleToolResult(e.toolUseId, e.isError);
         if (e.isError) {
           this.clearStatus();
           this.statusEl.setText(`Tool error.`);
         }
+        // Don't bring the textbox-anchored thinking indicator back —
+        // the tool group hosts its own inline indicator while it's open.
+        // It'll keep cycling until the next assistant-text or tool-use.
         break;
       case "result": {
         const turnTokens = this.tokensFromUsage(e.raw.usage);
@@ -1101,6 +1363,7 @@ export class ClaudeForObsidianView extends ItemView {
           this.sessionTokensUsed = Math.max(this.sessionTokensUsed, turnTokens);
           this.renderBattery();
         }
+        this.setThinking(false);
         break;
       }
       case "stderr":
@@ -1116,6 +1379,7 @@ export class ClaudeForObsidianView extends ItemView {
         if (this.currentAssistant) this.flushAssistantRender(this.currentAssistant);
         this.currentRun = null;
         this.currentAssistant = null;
+        this.settleAllPendingTools();
         this.setBusy(false);
         if (e.code !== 0 && e.code !== null && !hadOutput) {
           const detail = this.lastStderr ? ` ${this.lastStderr.slice(0, 200)}` : "";
