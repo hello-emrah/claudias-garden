@@ -40,67 +40,113 @@ All Claude Code sessions for a given working directory write to the same `~/.cla
 
 ## Install
 
-You'll be using this plugin to talk to Claude. The simplest way to install it is to **ask Claude to install it**. If you already have the Claude Code CLI, you're 90% there; Claude can drive the rest.
-
-### Easiest path: ask Claude Code
-
-1. Open a Claude Code session in any terminal (or VS Code).
-2. Paste this prompt, replacing `<your-vault-path>`:
-
-   ```text
-   Install this Obsidian plugin into my vault at <your-vault-path>:
-   https://github.com/hello-emrah/claude-for-obsidian
-   ```
-
-3. Claude will read this README, run the right commands, and tell you when to flip the **Settings → Community plugins → Claude for Obsidian** toggle inside Obsidian. That toggle is the only manual step.
-
-If you don't have the Claude Code CLI yet, see *Prerequisites* below.
+Three phases. Phase 1 is one-time terminal setup, run by hand. Phase 2 hands the rest to Claude Code itself. Phase 3 is the manual on-switch in Obsidian. Most people will be done in ten minutes.
 
 ### Platform support
 
-- macOS (Apple Silicon and Intel) — primary
+- macOS 11+ on Apple Silicon or Intel — primary, well tested
 - Linux desktop — should work, lightly tested
 - Windows — not supported yet
 
-### Prerequisites
+### What your machine needs
 
-The plugin spawns the locally installed `claude` CLI as a subprocess. So you need that, signed in. Everything else is optional or contributor-only.
+| # | Item | Required? | Why |
+| --- | --- | --- | --- |
+| 1 | Obsidian 1.5+ | Yes | The plugin's host |
+| 2 | Anthropic account on a paid plan (Pro, Max, or API credits) | Yes | The CLI needs it to actually respond |
+| 3 | Xcode Command Line Tools | Yes | Provides `git` and the C toolchain Homebrew needs |
+| 4 | Homebrew | Yes | Package manager for everything else |
+| 5 | Node 18+ | Yes | Provides `npm`, which the Claude Code CLI installs through |
+| 6 | Claude Code CLI, signed in | Yes | The plugin spawns it as a subprocess; no CLI, no agent |
+| 7 | Obsidian's own command-line interface | Recommended | Lets Claude rename and move files safely; without it, renames can break wikilinks. Enable at **Obsidian → Settings → General → Command line interface** |
 
-| Prerequisite | Required? | Why |
-| --- | --- | --- |
-| Claude Code CLI, signed in | Yes | The plugin spawns it as a subprocess. No CLI = no agent. |
-| Obsidian 1.5+ | Yes | The plugin's host. |
-| Obsidian's own command-line interface | Recommended | Lets Claude rename and move files through Obsidian, keeping wikilinks intact. Without it, file renames can break links. Enable: **Obsidian → Settings → General → Command line interface**. |
-| Node 18+ | Optional | Only needed if you install from source rather than the release zip. |
+No Python required. No Docker. Nothing else.
 
-#### Installing the Claude Code CLI from zero
+### Phase 1 — Bootstrap (one-time, by hand)
 
-If you don't have the Claude Code CLI yet, the agent will need a working `npm`. On a fresh Mac:
+If you've used the Claude Code CLI from your terminal recently, skip to Phase 2. Otherwise open Terminal (Cmd-Space → "Terminal" → Enter) and paste each block in order.
 
 ```bash
-# Install Homebrew if you don't have it (skip if `brew --version` works)
+# 1. Xcode Command Line Tools (will pop a system dialog — click Install, then wait)
+xcode-select --install
+```
+
+Wait for the dialog to finish before continuing. If the tools were already installed you'll see *command line tools are already installed* — that's fine.
+
+```bash
+# 2. Homebrew (skip if `brew --version` already prints a version)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Node (gives you npm)
-brew install node
+# Add brew to your shell PATH (Apple Silicon path; Intel Macs replace with /usr/local)
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
 
-# Claude Code CLI
+```bash
+# 3. Node (provides npm)
+brew install node
+```
+
+```bash
+# 4. Claude Code CLI
 npm install -g @anthropic-ai/claude-code
 claude login
 ```
 
-`claude login` opens a browser for Anthropic auth.
-
-Verify:
+`claude login` opens a browser. Sign in to your Anthropic account. Return to terminal when the browser confirms.
 
 ```bash
+# 5. Verify — both lines should print something
 which claude
 claude --version
 ```
 
-Both should print something. If they do, you're ready.
+If both print, Phase 1 is done.
 
-### Manual install path A — release zip (no Node required)
+### Phase 2 — Let Claude Code install the plugin
+
+Find your vault's absolute path:
+
+- In Obsidian, click the vault name at the top of the file list (or **Settings → About** in some versions).
+- Right-click the vault folder in Finder, hold **Option**, and choose *Copy "..." as Pathname*.
+
+Then in your terminal, run:
+
+```bash
+claude
+```
+
+That opens an interactive Claude Code session. Paste this prompt, replacing `<your-vault-path>` with what you copied:
+
+```text
+Install this Obsidian plugin into my vault at <your-vault-path>:
+https://github.com/hello-emrah/claude-for-obsidian
+```
+
+Claude reads this README, runs the right commands, and tells you when Phase 3 is needed. Don't close the terminal until it confirms it's done.
+
+### Phase 3 — Turn it on inside Obsidian
+
+1. Open Obsidian on the vault you installed into.
+2. **Settings → Community plugins**. If a "Turn on community plugins" prompt appears, click *Turn on*.
+3. Find **Claude for Obsidian** in the installed plugins list and toggle it on.
+4. Click the bot icon in the left ribbon, or run the **Open Claude for Obsidian panel** command. Send a test message.
+
+If you get a reply, you're done. Enjoy.
+
+### Plugin settings to check
+
+The plugin auto-detects the `claude` binary on first run, so you usually don't need to touch settings. If anything looks off, open **Settings → Claude for Obsidian** and confirm:
+
+- **Claude binary path** — should be auto-filled. If empty, run `which claude` in a terminal and paste the result here.
+- **Permission mode** — leave on `acceptEdits`. Don't switch to `default` (no permission UI yet, will hang on tool calls).
+- **Model** — leave empty unless you have a specific model in mind.
+
+### Manual install fallbacks
+
+If you'd rather drive the install yourself instead of letting Claude Code do it.
+
+#### Path A — release zip (no Node required after Phase 1)
 
 ```bash
 VAULT="<your-vault-path>"
@@ -111,7 +157,7 @@ unzip -o cfob.zip
 rm cfob.zip
 ```
 
-### Manual install path B — clone and build (for contributors)
+#### Path B — clone and build (for contributors)
 
 ```bash
 VAULT="<your-vault-path>"
@@ -125,22 +171,7 @@ mkdir -p "$VAULT/.obsidian/plugins/claude-for-obsidian"
 cp main.js manifest.json styles.css "$VAULT/.obsidian/plugins/claude-for-obsidian/"
 ```
 
-### Enable in Obsidian (manual)
-
-1. Open Obsidian on the vault you installed into.
-2. **Settings → Community plugins**. If Restricted mode is on, turn it off.
-3. Find **Claude for Obsidian** in the installed plugins list and toggle it on.
-4. Click the bot icon in the left ribbon. Send a test message.
-
-### Verify
-
-The plugin auto-detects the `claude` binary on first run. If you see a Notice asking you to set it manually:
-
-```bash
-which claude
-```
-
-Paste the result into **Settings → Claude for Obsidian → Claude binary path**.
+After either path, do Phase 3 above.
 
 ## Configuration
 
