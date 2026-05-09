@@ -31,7 +31,7 @@ export class ClaudeForObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Claude binary path")
-      .setDesc("Absolute path to the claude CLI. Obsidian doesn't inherit your shell PATH on macOS, so a full path is required.")
+      .setDesc("Absolute path to the claude CLI. Auto-detected on first run via `which claude`. Override here if detection picked the wrong location or failed.")
       .addText((text) =>
         text
           .setPlaceholder("/opt/homebrew/bin/claude")

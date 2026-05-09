@@ -38,31 +38,97 @@ All Claude Code sessions for a given working directory write to the same `~/.cla
 - Context-remaining counter that only surfaces when 50% of the window has been consumed, so you aren't counted while you write
 - Auto-growing input, one to ten lines, Enter to send, Shift-Enter for newline
 
-## Requirements
-
-- macOS or Linux desktop
-- Obsidian 1.5 or newer
-- Claude Code CLI installed and signed in. Confirm with `which claude` and a test run in your terminal first.
-
-Windows is not yet supported. The subprocess and PATH handling are macOS first today.
-
 ## Install
 
-Manual install for now (the plugin is not in the community store).
+This section is written as a runbook. Copy any block into a terminal verbatim. Every command is platform-agnostic where possible; macOS and Linux deviations are called out.
 
-1. Clone this repo somewhere outside your vault.
-2. `cd plugin && npm install && npm run build`
-3. Copy or symlink the `plugin/` folder into `<your-vault>/.obsidian/plugins/claude-for-obsidian/`.
-4. In Obsidian: Settings, Community plugins, turn off Restricted mode, enable Claude for Obsidian.
-5. Click the bot icon in the left ribbon, or run the `Open Claude for Obsidian panel` command.
+> **For LLM agents.** This README is the install spec. Replace `<your-vault-path>` with the absolute path to the user's Obsidian vault and run the blocks in order. The only manual human step is the final Community Plugins toggle in Obsidian's UI.
+
+### Platform support
+
+- macOS (Apple Silicon and Intel) — primary
+- Linux desktop — should work, lightly tested
+- Windows — not supported yet (subprocess and PATH handling are macOS-first)
+
+### Prerequisites
+
+**Required.**
+
+```bash
+# 1. Node 18 or newer (needed only for the build-from-source path; skip if installing from the release zip)
+node --version
+
+# 2. Claude Code CLI, signed in
+npm install -g @anthropic-ai/claude-code
+claude login
+which claude
+claude --version
+```
+
+If `which claude` returns a path and `claude --version` prints a version string, the CLI is installed correctly.
+
+**Recommended (for vault safety).**
+
+The plugin doesn't need Obsidian's command-line interface to run. But once Claude is acting on the vault from inside the panel, file renames and moves should go through Obsidian's CLI to keep wikilinks resolved and frontmatter intact. Without it, Claude falls back to plain Edit/Write which can break Obsidian-flavoured links on rename.
+
+Enable: **Obsidian → Settings → General → Command line interface**.
+
+### Install path A — release zip (recommended for users)
+
+```bash
+# Set this once
+VAULT="<your-vault-path>"
+
+# Pull the latest release zip and unpack into the vault's plugins folder
+mkdir -p "$VAULT/.obsidian/plugins/claude-for-obsidian"
+cd "$VAULT/.obsidian/plugins/claude-for-obsidian"
+curl -L -o cfob.zip https://github.com/hello-emrah/claude-for-obsidian/releases/latest/download/claude-for-obsidian.zip
+unzip -o cfob.zip
+rm cfob.zip
+```
+
+### Install path B — clone and build (for contributors)
+
+```bash
+# Set this once
+VAULT="<your-vault-path>"
+
+git clone https://github.com/hello-emrah/claude-for-obsidian.git ~/Developer/claude-for-obsidian
+cd ~/Developer/claude-for-obsidian/plugin
+npm install
+npm run build
+
+# Copy the build artefacts into the vault
+mkdir -p "$VAULT/.obsidian/plugins/claude-for-obsidian"
+cp main.js manifest.json styles.css "$VAULT/.obsidian/plugins/claude-for-obsidian/"
+```
+
+### Enable (manual step)
+
+1. Open Obsidian on the vault you installed into.
+2. **Settings → Community plugins**. If Restricted mode is on, turn it off.
+3. Find **Claude for Obsidian** in the installed plugins list and toggle it on.
+4. Click the bot icon in the left ribbon, or run the **Open Claude for Obsidian panel** command.
+
+### Verify
+
+The plugin auto-detects the `claude` binary on first run by walking your shell's PATH and a list of common install locations. If detection succeeds, settings will already point at the right binary. If you see a notice telling you to set the path manually:
+
+```bash
+which claude
+```
+
+Paste the result into **Settings → Claude for Obsidian → Claude binary path**.
+
+Send a test message in the panel. If you get a reply, you're done.
 
 ## Configuration
 
 Settings tab fields:
 
-- **Claude binary path**: absolute path to the `claude` CLI. Defaults to `/opt/homebrew/bin/claude`. Obsidian does not inherit your shell PATH on macOS, so an absolute path is required.
-- **Model**: optional. Passed as `--model`. Leave empty to use the CLI default.
-- **Permission mode**: how the CLI handles tool permissions. `acceptEdits` is the recommended default. `default` will surface a refusal rather than a permission prompt because there is no permission UI in the plugin yet (Increment 4).
+- **Claude binary path** — absolute path to the `claude` CLI. Auto-detected on first run. Override only if detection picked the wrong location.
+- **Model** — optional, passed as `--model`. Leave empty to use the CLI default.
+- **Permission mode** — how the CLI handles tool permissions. `acceptEdits` is the recommended default. `default` will surface a refusal rather than a permission prompt because there is no permission UI in the plugin yet (Increment 4).
 
 Identity and skills come from your existing Claude Code setup, not from plugin settings:
 
@@ -75,7 +141,7 @@ The plugin does not duplicate or override these. It inherits them by setting the
 
 ## Status
 
-Early. Built for one operator, shared because it might help others. Current tag: `v0.4.1`.
+Early. Built for one operator, shared because it might help others. Current tag: `v0.4.2`.
 
 Shipped:
 
@@ -88,7 +154,7 @@ Shipped:
 Planned:
 
 - **Increment 4** — model picker, slash command palette, plus menu (attach, mention file, clear, rewind), permission mode toggle, active file context injection. Permission UI is the largest piece and likely earns its own increment
-- **Increment 5** — multi-chat tabs, mic toggle, sticky last operator message with fold and rewind
+- **Increment 5** — UI refinement borrowing organisation from the Claude native desktop app: dropdown chat title with history search and rename/delete, top-right transcript view-mode toggle alongside new-chat and download, microphone inline in the textbox, single circular button on the bottom-right collapsing model picker + effort slider + plan usage meters
 
 ## Hacking
 
@@ -96,7 +162,13 @@ Plugin source lives under `plugin/`. To work on it:
 
 1. Clone the repo.
 2. `cd plugin && npm install && npm run build` (or `npm run dev` for watch mode).
-3. Set up a dev vault wherever suits you and symlink the `plugin/` folder into its `.obsidian/plugins/claude-for-obsidian/`. The repo's `dev-vault/` path is gitignored — keep your scratch vault out of source control.
+3. Set up a dev vault and symlink the `plugin/` folder into its `.obsidian/plugins/claude-for-obsidian/`. The repo's `dev-vault/` path is gitignored.
+
+```bash
+ln -s "$(pwd)/plugin" /path/to/dev-vault/.obsidian/plugins/claude-for-obsidian
+```
+
+**Symlinks belong in dev vaults only, never in your live vault.** If your vault is on iCloud or any other sync, the sync layer treats a symlink as a symlink, not as the resolved target. Every other machine paired to that vault will inherit a dead link. For live vaults always copy the build artefacts (`main.js`, `manifest.json`, `styles.css`) — the install matrix above does this correctly.
 
 ## Licence
 
