@@ -5,6 +5,8 @@ import * as os from "os";
 import { ClaudeRun, StreamEvent } from "./claude-client";
 import { exportSession } from "./chat-export";
 import { WikilinkSuggest } from "./wikilink-suggest";
+import { openModelPopup } from "./model-popup";
+import { MODEL_OPTIONS, EFFORT_OPTIONS } from "./settings";
 import type ClaudeForObsidianPlugin from "./main";
 
 interface SessionSummary {
@@ -43,7 +45,6 @@ interface AssistantBuffer {
 const THINKING_VERBS = [
   "Foraging",
   "Frolicking",
-  "Bird watching",
   "Gallivanting",
   "Weeding",
   "Harvesting",
@@ -57,10 +58,21 @@ const THINKING_VERBS = [
   "Listening",
   "Wandering",
   "Pottering",
-  "Distilling",
   "Tending",
   "Kindling",
-  "Musing",
+  "Diving",
+  "Casting",
+  "Dismantling",
+  "Kneading",
+  "Ploughing",
+  "Kissing",
+  "Hugging",
+  "Feeling",
+  "Revolting",
+  "Strumming",
+  "Plucking",
+  "Smiling",
+  "Singing",
 ];
 
 const THINKING_ROTATE_MS = 3000;
@@ -73,8 +85,9 @@ export class ClaudeForObsidianView extends ItemView {
   private outputEl!: HTMLDivElement;
   private inputEl!: HTMLTextAreaElement;
   private statusEl!: HTMLDivElement;
-  private usageEl!: HTMLDivElement;
-  private chatTitleEl!: HTMLDivElement;
+  private batteryEl!: HTMLButtonElement;
+  private modelBtn!: HTMLButtonElement;
+  private chatTitleEl!: HTMLButtonElement;
   private sendStopBtn!: HTMLButtonElement;
   private currentRun: ClaudeRun | null = null;
   private currentAssistant: AssistantBuffer | null = null;
@@ -109,13 +122,15 @@ export class ClaudeForObsidianView extends ItemView {
     root.addClass("claude-for-obsidian-view");
 
     const headerRow = root.createDiv({ cls: "cfo-header-row" });
-    this.chatTitleEl = headerRow.createDiv({ cls: "cfo-chat-title-tab" });
+    this.chatTitleEl = headerRow.createEl("button", { cls: "cfo-chat-title-tab" });
+    this.chatTitleEl.title = "Chat history, rename, delete";
+    this.chatTitleEl.onclick = (evt) => this.openHistoryMenu(evt);
     this.refreshChatTitle();
     headerRow.createDiv({ cls: "cfo-header-spacer" });
-    const historyBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
-    setIcon(historyBtn, "clock");
-    historyBtn.title = "Recent chats in this vault";
-    historyBtn.onclick = (evt) => this.openHistoryMenu(evt);
+    const transcriptBtn = headerRow.createEl("button", { cls: "cfo-header-btn cfo-header-btn-disabled" });
+    setIcon(transcriptBtn, "list");
+    transcriptBtn.title = "Transcript view mode (coming soon)";
+    transcriptBtn.disabled = true;
     const newBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
     setIcon(newBtn, "plus");
     newBtn.title = "New chat";
@@ -143,6 +158,9 @@ export class ClaudeForObsidianView extends ItemView {
     this.inputEl.rows = 1;
     this.autosizeInput();
 
+    this.sendStopBtn = textBox.createEl("button", { cls: "cfo-send-inline" });
+    setIcon(this.sendStopBtn, "corner-down-left");
+
     const footerNav = inputStack.createDiv({ cls: "cfo-footer-nav" });
 
     const plusBtn = footerNav.createEl("button", { cls: "cfo-footer-btn cfo-footer-btn-disabled" });
@@ -155,16 +173,16 @@ export class ClaudeForObsidianView extends ItemView {
     slashBtn.title = "Slash commands (coming soon)";
     slashBtn.disabled = true;
 
-    this.usageEl = footerNav.createDiv({ cls: "cfo-usage" });
-    this.renderUsage();
+    footerNav.createDiv({ cls: "cfo-footer-spacer" });
 
-    const permBtn = footerNav.createEl("button", { cls: "cfo-footer-btn cfo-footer-btn-disabled" });
-    setIcon(permBtn, "code-2");
-    permBtn.title = "Edit permissions (coming soon)";
-    permBtn.disabled = true;
+    this.batteryEl = footerNav.createEl("button", { cls: "cfo-battery" });
+    this.batteryEl.onclick = () => this.openPlanUsagePopup();
+    this.renderBattery();
 
-    this.sendStopBtn = footerNav.createEl("button", { cls: "cfo-send-stop-btn" });
-    setIcon(this.sendStopBtn, "arrow-up");
+    this.modelBtn = footerNav.createEl("button", { cls: "cfo-model-btn" });
+    this.modelBtn.onclick = () => this.openModelMenu();
+    this.refreshModelBtn();
+
     this.sendStopBtn.title = "Send (Enter)";
     this.sendStopBtn.onclick = () => this.toggleSendStop();
     this.inputEl.addEventListener("input", () => this.autosizeInput());
@@ -220,15 +238,23 @@ export class ClaudeForObsidianView extends ItemView {
     return this.app.vault.getName();
   }
 
+  private setTitleText(text: string): void {
+    if (!this.chatTitleEl) return;
+    this.chatTitleEl.empty();
+    this.chatTitleEl.createSpan({ cls: "cfo-chat-title-label", text });
+    const chevron = this.chatTitleEl.createSpan({ cls: "cfo-chat-title-chevron" });
+    setIcon(chevron, "chevron-down");
+  }
+
   private refreshChatTitle(): void {
     if (!this.chatTitleEl) return;
     const id = this.activeSessionId;
     if (!id) {
       if (this.pendingTitle) {
-        this.chatTitleEl.setText(this.pendingTitle);
+        this.setTitleText(this.pendingTitle);
         this.chatTitleEl.toggleClass("cfo-chat-title-empty", false);
       } else {
-        this.chatTitleEl.setText("New chat");
+        this.setTitleText("New chat");
         this.chatTitleEl.toggleClass("cfo-chat-title-empty", true);
       }
       return;
@@ -236,7 +262,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.chatTitleEl.toggleClass("cfo-chat-title-empty", false);
     const custom = this.plugin.settings.sessionLabels[id];
     if (custom) {
-      this.chatTitleEl.setText(custom);
+      this.setTitleText(custom);
       return;
     }
     // Look up first user message from the jsonl on demand.
@@ -249,7 +275,7 @@ export class ClaudeForObsidianView extends ItemView {
           try {
             const evt = JSON.parse(line);
             if (evt.type === "user" && typeof evt.message?.content === "string") {
-              this.chatTitleEl.setText(evt.message.content);
+              this.setTitleText(evt.message.content);
               return;
             }
           } catch {}
@@ -259,10 +285,10 @@ export class ClaudeForObsidianView extends ItemView {
     // Fall back to pendingTitle (captured at send time) if jsonl hasn't
     // flushed the user message yet.
     if (this.pendingTitle) {
-      this.chatTitleEl.setText(this.pendingTitle);
+      this.setTitleText(this.pendingTitle);
       return;
     }
-    this.chatTitleEl.setText("(untitled)");
+    this.setTitleText("(untitled)");
   }
 
   private projectsRoot(): string {
@@ -326,7 +352,6 @@ export class ClaudeForObsidianView extends ItemView {
 
   private openHistoryMenu(evt: MouseEvent): void {
     const doc = this.containerEl.ownerDocument;
-    const win = doc.defaultView ?? window;
 
     // Close any existing popup first, scoped to the containing window.
     doc.querySelectorAll(".cfo-history-popup").forEach((el) => el.remove());
@@ -334,11 +359,13 @@ export class ClaudeForObsidianView extends ItemView {
     const sessions = this.listSessions();
     const popup = doc.body.createDiv({ cls: "cfo-history-popup" });
 
-    // Position near the trigger button.
+    // Position near the trigger button. Anchor by left edge so a
+    // left-side trigger (the chat title pill) opens the popup rightward
+    // rather than off the screen.
     const target = evt.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     popup.style.top = `${rect.bottom + 4}px`;
-    popup.style.right = `${win.innerWidth - rect.right}px`;
+    popup.style.left = `${rect.left}px`;
 
     // Search input.
     const searchWrap = popup.createDiv({ cls: "cfo-history-search" });
@@ -511,7 +538,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.outputEl.empty();
     this.sessionTokensUsed = 0;
     this.lastDateKey = null;
-    this.renderUsage();
+    this.renderBattery();
     this.replaySession(id);
     this.refreshChatTitle();
     this.clearStatus();
@@ -583,7 +610,7 @@ export class ClaudeForObsidianView extends ItemView {
     flushAssistant();
     if (lastTokenTotal > 0) {
       this.sessionTokensUsed = lastTokenTotal;
-      this.renderUsage();
+      this.renderBattery();
     }
   }
 
@@ -599,7 +626,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.outputEl.empty();
     this.sessionTokensUsed = 0;
     this.lastDateKey = null;
-    this.renderUsage();
+    this.renderBattery();
     this.refreshChatTitle();
     this.clearStatus();
   }
@@ -849,9 +876,9 @@ export class ClaudeForObsidianView extends ItemView {
 
   private setBusy(busy: boolean): void {
     this.sendStopBtn.empty();
-    setIcon(this.sendStopBtn, busy ? "square" : "arrow-up");
+    setIcon(this.sendStopBtn, busy ? "square" : "corner-down-left");
     this.sendStopBtn.title = busy ? "Stop (Esc)" : "Send (Enter)";
-    this.sendStopBtn.toggleClass("cfo-send-stop-btn-busy", busy);
+    this.sendStopBtn.toggleClass("cfo-send-inline-busy", busy);
     if (!busy) this.setThinking(false);
   }
 
@@ -896,17 +923,131 @@ export class ClaudeForObsidianView extends ItemView {
     return input + output + cacheCreate + cacheRead;
   }
 
-  private renderUsage(): void {
-    if (!this.usageEl) return;
+  private renderBattery(): void {
+    if (!this.batteryEl) return;
     const used = this.sessionTokensUsed;
-    const usedPct = (used / CONTEXT_WINDOW_TOKENS) * 100;
-    if (usedPct < 50) {
-      this.usageEl.empty();
-      return;
-    }
     const remaining = Math.max(0, CONTEXT_WINDOW_TOKENS - used);
-    const pct = Math.round((remaining / CONTEXT_WINDOW_TOKENS) * 100);
-    this.usageEl.setText(`${pct}% Context Remains`);
+    const remainingPct = Math.max(0, Math.min(100, Math.round((remaining / CONTEXT_WINDOW_TOKENS) * 100)));
+
+    // SVG ring: 16px box, stroke 2.5, drains clockwise from full.
+    const size = 16;
+    const stroke = 2.5;
+    const r = (size - stroke) / 2;
+    const cx = size / 2;
+    const cy = size / 2;
+    const circumference = 2 * Math.PI * r;
+    const dash = (remainingPct / 100) * circumference;
+    const gap = circumference - dash;
+
+    let tone = "full";
+    if (remainingPct <= 10) tone = "urgent";
+    else if (remainingPct <= 30) tone = "warning";
+    else if (remainingPct <= 50) tone = "low";
+
+    this.batteryEl.empty();
+    this.batteryEl.removeClass("cfo-battery-low");
+    this.batteryEl.removeClass("cfo-battery-warning");
+    this.batteryEl.removeClass("cfo-battery-urgent");
+    if (tone === "low") this.batteryEl.addClass("cfo-battery-low");
+    else if (tone === "warning") this.batteryEl.addClass("cfo-battery-warning");
+    else if (tone === "urgent") this.batteryEl.addClass("cfo-battery-urgent");
+
+    this.batteryEl.title = `${remainingPct}% context remaining. Click for plan usage.`;
+
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = this.batteryEl.createSvg("svg", {
+      attr: {
+        width: String(size),
+        height: String(size),
+        viewBox: `0 0 ${size} ${size}`,
+      },
+    });
+    // Track
+    svg.createSvg("circle", {
+      attr: {
+        cx: String(cx),
+        cy: String(cy),
+        r: String(r),
+        fill: "none",
+        stroke: "var(--background-modifier-border)",
+        "stroke-width": String(stroke),
+      },
+    });
+    // Drain ring
+    const ring = svg.createSvg("circle", {
+      attr: {
+        cx: String(cx),
+        cy: String(cy),
+        r: String(r),
+        fill: "none",
+        "stroke-width": String(stroke),
+        "stroke-linecap": "round",
+        "stroke-dasharray": `${dash} ${gap}`,
+        transform: `rotate(-90 ${cx} ${cy})`,
+      },
+    });
+    ring.addClass("cfo-battery-ring");
+    void ns;
+  }
+
+  private refreshModelBtn(): void {
+    if (!this.modelBtn) return;
+    this.modelBtn.empty();
+    const modelId = this.plugin.settings.model || MODEL_OPTIONS[1].id;
+    const model = MODEL_OPTIONS.find((m) => m.id === modelId) ?? MODEL_OPTIONS[1];
+    const effortId = this.plugin.settings.effort;
+    const effort = EFFORT_OPTIONS.find((e) => e.id === effortId) ?? EFFORT_OPTIONS[2];
+
+    const inner = this.modelBtn.createSpan({ cls: "cfo-model-btn-inner" });
+    inner.createSpan({ cls: "cfo-model-btn-name", text: model.label });
+    if (model.sublabel) {
+      inner.createSpan({
+        cls: model.legacy ? "cfo-model-btn-sub-legacy" : "cfo-model-btn-sub",
+        text: model.sublabel,
+      });
+    }
+    inner.createSpan({ cls: "cfo-model-btn-sep", text: "·" });
+    inner.createSpan({ cls: "cfo-model-btn-effort", text: effort.label });
+  }
+
+  private openModelMenu(): void {
+    openModelPopup({
+      settings: this.plugin.settings,
+      triggerEl: this.modelBtn,
+      onModelChange: async (id) => {
+        this.plugin.settings.model = id;
+        await this.plugin.saveSettings();
+        this.refreshModelBtn();
+      },
+      onEffortChange: async (effort) => {
+        this.plugin.settings.effort = effort;
+        await this.plugin.saveSettings();
+        this.refreshModelBtn();
+      },
+      onFastModeChange: async (enabled) => {
+        this.plugin.settings.fastMode = enabled;
+        await this.plugin.saveSettings();
+        this.refreshModelBtn();
+      },
+    });
+  }
+
+  private openPlanUsagePopup(): void {
+    const doc = this.containerEl.ownerDocument;
+    doc.querySelectorAll(".cfo-plan-popup").forEach((el) => el.remove());
+    const popup = doc.body.createDiv({ cls: "cfo-plan-popup" });
+    const rect = this.batteryEl.getBoundingClientRect();
+    popup.style.bottom = `${doc.defaultView!.innerHeight - rect.top + 6}px`;
+    popup.style.left = `${rect.left}px`;
+    popup.createDiv({ cls: "cfo-plan-popup-title", text: "Plan usage" });
+    popup.createDiv({ cls: "cfo-plan-popup-body", text: "Coming soon. The CLI doesn't expose plan usage yet." });
+    const dismiss = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node)) {
+        popup.remove();
+        doc.removeEventListener("mousedown", dismiss, true);
+      }
+    };
+    setTimeout(() => doc.addEventListener("mousedown", dismiss, true), 0);
   }
 
   private formatTokens(n: number): string {
@@ -958,7 +1099,7 @@ export class ClaudeForObsidianView extends ItemView {
         const turnTokens = this.tokensFromUsage(e.raw.usage);
         if (turnTokens > 0) {
           this.sessionTokensUsed = Math.max(this.sessionTokensUsed, turnTokens);
-          this.renderUsage();
+          this.renderBattery();
         }
         break;
       }

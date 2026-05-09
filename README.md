@@ -6,7 +6,7 @@ This plugin does not call the Anthropic API directly and does not handle API key
 
 ## Highlights
 
-The plugin's pitch isn't *Claude in your sidebar* — that's been done. It's *Claude that lives inside the vault graph*. Five features carry the weight:
+The plugin's pitch isn't *Claude in your sidebar* — that's been done. It's *Claude that lives inside the vault graph*. Four features carry the weight:
 
 ### Wikilink autocomplete in the input
 
@@ -24,19 +24,19 @@ Every chat shows a `─── [[YYYY-MM-DD]] ───` divider at the top, and 
 
 A button on the panel exports the current conversation as a structured markdown transcript with proper speaker headings, time-stamped, frontmatter included, ready to drop into a daily note, project folder, or a permanent record. The export schema is locked and used vault-wide.
 
-### Cross-client session visibility
-
-All Claude Code sessions for a given working directory write to the same `~/.claude/projects/<encoded-cwd>/` folder regardless of which surface created them — terminal CLI, VS Code extension, or this plugin. The history dropdown surfaces the lot. You can browse and continue chats started in any of those surfaces from inside Obsidian.
-
 ## Other things it does
 
 - Sidebar chat panel; streams responses with live markdown rendering
 - Working directory locked to the active vault, so `CLAUDE.md` and skills in `~/.claude/` and `<vault>/.claude/` are picked up automatically
 - Tool calls render inline as collapsible blocks
 - Session continuity: switch between recent chats with replay, auto-resume across panel reopens and app relaunches
-- Animated thinking text while the agent is working, drawn from a small lexicon (foraging, frolicking, weeding, musing, …)
-- Context-remaining counter that only surfaces when 50% of the window has been consumed, so you aren't counted while you write
+- Animated thinking text while the agent is working, drawn from a small lexicon (foraging, frolicking, weeding, kneading, plucking, …)
+- Context-remaining ring that drains as context fills (green → yellow → orange → red), with a model + effort + fast-mode picker beside it
 - Auto-growing input, one to ten lines, Enter to send, Shift-Enter for newline
+
+## Known issues
+
+- **Resuming sessions started in another Claude Code surface (terminal, VS Code).** Sessions for the current working directory are visible in the history dropdown regardless of which surface created them. Selecting a foreign session from the popup currently *replays* whatever surface most recently wrote to it rather than the session you clicked. Resuming a foreign session sometimes works on the first turn after a long cold-start; sometimes it silently no-ops. Treat foreign sessions in the dropdown as **read-only for now**. Plugin-originated sessions resume reliably.
 
 ## Install
 
@@ -192,7 +192,7 @@ The plugin does not duplicate or override these. It inherits them by setting the
 
 ## Status
 
-Early. Built for one operator, shared because it might help others. Current tag: `v0.4.2`.
+Early. Built for one operator, shared because it might help others. Current tag: `v0.4.3`.
 
 Shipped:
 
