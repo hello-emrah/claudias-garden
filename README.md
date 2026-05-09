@@ -40,46 +40,70 @@ All Claude Code sessions for a given working directory write to the same `~/.cla
 
 ## Install
 
-This section is written as a runbook. Copy any block into a terminal verbatim. Every command is platform-agnostic where possible; macOS and Linux deviations are called out.
+You'll be using this plugin to talk to Claude. The simplest way to install it is to **ask Claude to install it**. If you already have the Claude Code CLI, you're 90% there; Claude can drive the rest.
 
-> **For LLM agents.** This README is the install spec. Replace `<your-vault-path>` with the absolute path to the user's Obsidian vault and run the blocks in order. The only manual human step is the final Community Plugins toggle in Obsidian's UI.
+### Easiest path: ask Claude Code
+
+1. Open a Claude Code session in any terminal (or VS Code).
+2. Paste this prompt, replacing `<your-vault-path>`:
+
+   ```text
+   Install this Obsidian plugin into my vault at <your-vault-path>:
+   https://github.com/hello-emrah/claude-for-obsidian
+   ```
+
+3. Claude will read this README, run the right commands, and tell you when to flip the **Settings → Community plugins → Claude for Obsidian** toggle inside Obsidian. That toggle is the only manual step.
+
+If you don't have the Claude Code CLI yet, see *Prerequisites* below.
 
 ### Platform support
 
 - macOS (Apple Silicon and Intel) — primary
 - Linux desktop — should work, lightly tested
-- Windows — not supported yet (subprocess and PATH handling are macOS-first)
+- Windows — not supported yet
 
 ### Prerequisites
 
-**Required.**
+The plugin spawns the locally installed `claude` CLI as a subprocess. So you need that, signed in. Everything else is optional or contributor-only.
+
+| Prerequisite | Required? | Why |
+| --- | --- | --- |
+| Claude Code CLI, signed in | Yes | The plugin spawns it as a subprocess. No CLI = no agent. |
+| Obsidian 1.5+ | Yes | The plugin's host. |
+| Obsidian's own command-line interface | Recommended | Lets Claude rename and move files through Obsidian, keeping wikilinks intact. Without it, file renames can break links. Enable: **Obsidian → Settings → General → Command line interface**. |
+| Node 18+ | Optional | Only needed if you install from source rather than the release zip. |
+
+#### Installing the Claude Code CLI from zero
+
+If you don't have the Claude Code CLI yet, the agent will need a working `npm`. On a fresh Mac:
 
 ```bash
-# 1. Node 18 or newer (needed only for the build-from-source path; skip if installing from the release zip)
-node --version
+# Install Homebrew if you don't have it (skip if `brew --version` works)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# 2. Claude Code CLI, signed in
+# Node (gives you npm)
+brew install node
+
+# Claude Code CLI
 npm install -g @anthropic-ai/claude-code
 claude login
+```
+
+`claude login` opens a browser for Anthropic auth.
+
+Verify:
+
+```bash
 which claude
 claude --version
 ```
 
-If `which claude` returns a path and `claude --version` prints a version string, the CLI is installed correctly.
+Both should print something. If they do, you're ready.
 
-**Recommended (for vault safety).**
-
-The plugin doesn't need Obsidian's command-line interface to run. But once Claude is acting on the vault from inside the panel, file renames and moves should go through Obsidian's CLI to keep wikilinks resolved and frontmatter intact. Without it, Claude falls back to plain Edit/Write which can break Obsidian-flavoured links on rename.
-
-Enable: **Obsidian → Settings → General → Command line interface**.
-
-### Install path A — release zip (recommended for users)
+### Manual install path A — release zip (no Node required)
 
 ```bash
-# Set this once
 VAULT="<your-vault-path>"
-
-# Pull the latest release zip and unpack into the vault's plugins folder
 mkdir -p "$VAULT/.obsidian/plugins/claude-for-obsidian"
 cd "$VAULT/.obsidian/plugins/claude-for-obsidian"
 curl -L -o cfob.zip https://github.com/hello-emrah/claude-for-obsidian/releases/latest/download/claude-for-obsidian.zip
@@ -87,10 +111,9 @@ unzip -o cfob.zip
 rm cfob.zip
 ```
 
-### Install path B — clone and build (for contributors)
+### Manual install path B — clone and build (for contributors)
 
 ```bash
-# Set this once
 VAULT="<your-vault-path>"
 
 git clone https://github.com/hello-emrah/claude-for-obsidian.git ~/Developer/claude-for-obsidian
@@ -98,29 +121,26 @@ cd ~/Developer/claude-for-obsidian/plugin
 npm install
 npm run build
 
-# Copy the build artefacts into the vault
 mkdir -p "$VAULT/.obsidian/plugins/claude-for-obsidian"
 cp main.js manifest.json styles.css "$VAULT/.obsidian/plugins/claude-for-obsidian/"
 ```
 
-### Enable (manual step)
+### Enable in Obsidian (manual)
 
 1. Open Obsidian on the vault you installed into.
 2. **Settings → Community plugins**. If Restricted mode is on, turn it off.
 3. Find **Claude for Obsidian** in the installed plugins list and toggle it on.
-4. Click the bot icon in the left ribbon, or run the **Open Claude for Obsidian panel** command.
+4. Click the bot icon in the left ribbon. Send a test message.
 
 ### Verify
 
-The plugin auto-detects the `claude` binary on first run by walking your shell's PATH and a list of common install locations. If detection succeeds, settings will already point at the right binary. If you see a notice telling you to set the path manually:
+The plugin auto-detects the `claude` binary on first run. If you see a Notice asking you to set it manually:
 
 ```bash
 which claude
 ```
 
 Paste the result into **Settings → Claude for Obsidian → Claude binary path**.
-
-Send a test message in the panel. If you get a reply, you're done.
 
 ## Configuration
 
