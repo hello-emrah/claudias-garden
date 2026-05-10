@@ -191,7 +191,7 @@ export class ClaudeForObsidianView extends ItemView {
 
     const textBox = inputStack.createDiv({ cls: "cfo-textbox" });
     this.inputEl = textBox.createEl("textarea", { cls: "cfo-input" });
-    this.inputEl.placeholder = "Message Claude. Enter to send, Shift-Enter for newline.";
+    this.inputEl.placeholder = "Type / for commands";
     this.inputEl.rows = 1;
     this.autosizeInput();
 
@@ -206,15 +206,14 @@ export class ClaudeForObsidianView extends ItemView {
 
     const plusBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
     setIcon(plusBtn, "plus");
-    plusBtn.title = "Attach (coming soon)";
-    plusBtn.onclick = () =>
-      this.toggleInfoPopup(plusBtn, "Attach", "Coming soon. Attach files from your vault or computer.");
+    plusBtn.title = "Add (coming soon)";
+    plusBtn.onclick = () => this.togglePlusMenu(plusBtn);
 
-    const slashBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
-    setIcon(slashBtn, "slash");
-    slashBtn.title = "Slash commands (coming soon)";
-    slashBtn.onclick = () =>
-      this.toggleInfoPopup(slashBtn, "Slash commands", "Coming soon. Slash commands like /compact and /help, plus your installed skills.");
+    const micBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
+    setIcon(micBtn, "mic");
+    micBtn.title = "Voice input (coming soon)";
+    micBtn.onclick = () =>
+      this.toggleInfoPopup(micBtn, "Voice input", "Coming soon. Speech-to-text for the chat input.");
 
     footerNav.createDiv({ cls: "cfo-footer-spacer" });
 
@@ -1564,6 +1563,75 @@ export class ClaudeForObsidianView extends ItemView {
         this.refreshModelBtn();
       },
     });
+  }
+
+  private togglePlusMenu(triggerEl: HTMLElement): void {
+    const existing = this.containerEl.ownerDocument.querySelector(".cfo-plus-menu");
+    if (existing) {
+      triggerEl.removeClass("cfo-btn-active");
+      existing.remove();
+      return;
+    }
+    this.openPlusMenu(triggerEl);
+  }
+
+  private openPlusMenu(triggerEl: HTMLElement): void {
+    const doc = this.containerEl.ownerDocument;
+    const win = doc.defaultView!;
+    doc.querySelectorAll(".cfo-plus-menu").forEach((el) => el.remove());
+    const popup = doc.body.createDiv({ cls: "cfo-plus-menu" });
+    const rect = triggerEl.getBoundingClientRect();
+    popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
+    popup.style.left = `${Math.max(8, rect.left)}px`;
+
+    type Row = { icon: string; label: string; comingSoon: string };
+    const rows: Row[] = [
+      { icon: "paperclip", label: "Add files or photos", comingSoon: "Attach files. Coming soon." },
+      { icon: "folder", label: "Add folder", comingSoon: "Attach a folder. Coming soon." },
+      { icon: "slash", label: "Slash commands", comingSoon: "Slash commands like /compact and /help, plus your installed skills. Coming soon." },
+    ];
+    for (const r of rows) {
+      const row = popup.createDiv({ cls: "cfo-plus-menu-row" });
+      const iconEl = row.createSpan({ cls: "cfo-plus-menu-icon" });
+      setIcon(iconEl, r.icon);
+      row.createSpan({ cls: "cfo-plus-menu-label", text: r.label });
+      row.onclick = (e) => {
+        e.stopPropagation();
+        triggerEl.removeClass("cfo-btn-active");
+        popup.remove();
+        new Notice(r.comingSoon);
+      };
+    }
+
+    // Clamp left so the popup doesn't overflow the right edge.
+    const margin = 8;
+    const maxLeft = win.innerWidth - popup.offsetWidth - margin;
+    if (popup.offsetLeft > maxLeft) {
+      popup.style.left = `${Math.max(margin, maxLeft)}px`;
+    }
+
+    triggerEl.addClass("cfo-btn-active");
+
+    const dismiss = (e: MouseEvent) => {
+      if (popup.contains(e.target as Node)) return;
+      if (triggerEl.contains(e.target as Node)) return;
+      triggerEl.removeClass("cfo-btn-active");
+      popup.remove();
+      doc.removeEventListener("mousedown", dismiss, true);
+      doc.removeEventListener("keydown", esc, true);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        triggerEl.removeClass("cfo-btn-active");
+        popup.remove();
+        doc.removeEventListener("mousedown", dismiss, true);
+        doc.removeEventListener("keydown", esc, true);
+      }
+    };
+    setTimeout(() => {
+      doc.addEventListener("mousedown", dismiss, true);
+      doc.addEventListener("keydown", esc, true);
+    }, 0);
   }
 
   private togglePlanUsagePopup(): void {

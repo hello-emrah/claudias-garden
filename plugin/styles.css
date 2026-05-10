@@ -23,6 +23,30 @@
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+  /* Mask the content itself so it fades into the header above and the
+     input stack below, rather than crashing into them. As content
+     scrolls past the masked regions, the text itself fades — what the
+     overlay-div approach (retired §18:36) was trying and failing to do.
+
+     Coordinates:
+     - Top fade ends at 32px (8px top padding + 24px fade).
+     - Bottom fade endpoint at 100% - 12px (the input-stack's visual top
+       edge, accounting for its margin-top: -12px overlap onto cfo-output).
+     - Bottom fade begins 24px before that at 100% - 36px. */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 32px,
+    black calc(100% - 36px),
+    transparent calc(100% - 12px)
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 32px,
+    black calc(100% - 36px),
+    transparent calc(100% - 12px)
+  );
 }
 
 .cfo-output * {
@@ -930,6 +954,54 @@
 .cfo-mode-popup-check .svg-icon {
   width: 14px;
   height: 14px;
+}
+
+/* Plus menu — anchored above the `+` button on the bottom-left. Lists
+   the placeholder *Add files / Add folder / Slash commands* rows.
+   Each row is icon + label; clicking surfaces a Notice and closes
+   the menu. Same shape as the mode popup. */
+.cfo-plus-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 200px;
+  max-width: calc(100vw - 16px);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 6px 0;
+  font-size: var(--font-ui-small);
+}
+
+.cfo-plus-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--text-normal);
+}
+
+.cfo-plus-menu-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.cfo-plus-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  width: 16px;
+  height: 16px;
+}
+
+.cfo-plus-menu-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.cfo-plus-menu-label {
+  flex: 1 1 auto;
 }
 
 /* Plan usage placeholder popup. */
