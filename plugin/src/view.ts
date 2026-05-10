@@ -160,7 +160,7 @@ export class ClaudeForObsidianView extends ItemView {
     const headerRow = root.createDiv({ cls: "cfo-header-row" });
     this.chatTitleEl = headerRow.createEl("button", { cls: "cfo-chat-title-tab" });
     this.chatTitleEl.title = "Chat history, rename, delete";
-    this.chatTitleEl.onclick = (evt) => this.openHistoryMenu(evt);
+    this.chatTitleEl.onclick = (evt) => this.toggleHistoryMenu(evt);
     this.refreshChatTitle();
     headerRow.createDiv({ cls: "cfo-header-spacer" });
     const transcriptBtn = headerRow.createEl("button", { cls: "cfo-header-btn cfo-header-btn-disabled" });
@@ -199,24 +199,26 @@ export class ClaudeForObsidianView extends ItemView {
 
     const footerNav = inputStack.createDiv({ cls: "cfo-footer-nav" });
 
-    const plusBtn = footerNav.createEl("button", { cls: "cfo-footer-btn cfo-footer-btn-disabled" });
+    const plusBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
     setIcon(plusBtn, "plus");
     plusBtn.title = "Attach (coming soon)";
-    plusBtn.disabled = true;
+    plusBtn.onclick = () =>
+      this.toggleInfoPopup(plusBtn, "Attach", "Coming soon. Attach files from your vault or computer.");
 
-    const slashBtn = footerNav.createEl("button", { cls: "cfo-footer-btn cfo-footer-btn-disabled" });
+    const slashBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
     setIcon(slashBtn, "slash");
     slashBtn.title = "Slash commands (coming soon)";
-    slashBtn.disabled = true;
+    slashBtn.onclick = () =>
+      this.toggleInfoPopup(slashBtn, "Slash commands", "Coming soon. Slash commands like /compact and /help, plus your installed skills.");
 
     footerNav.createDiv({ cls: "cfo-footer-spacer" });
 
     this.batteryEl = footerNav.createEl("button", { cls: "cfo-battery" });
-    this.batteryEl.onclick = () => this.openPlanUsagePopup();
+    this.batteryEl.onclick = () => this.togglePlanUsagePopup();
     this.renderBattery();
 
     this.modelBtn = footerNav.createEl("button", { cls: "cfo-model-btn" });
-    this.modelBtn.onclick = () => this.openModelMenu();
+    this.modelBtn.onclick = () => this.toggleModelMenu();
     this.refreshModelBtn();
 
     this.sendStopBtn.title = "Send (Enter)";
@@ -383,6 +385,15 @@ export class ClaudeForObsidianView extends ItemView {
     return summaries;
   }
 
+  private toggleHistoryMenu(evt: MouseEvent): void {
+    const existing = this.containerEl.ownerDocument.querySelector(".cfo-history-popup");
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    this.openHistoryMenu(evt);
+  }
+
   private openHistoryMenu(evt: MouseEvent): void {
     const doc = this.containerEl.ownerDocument;
 
@@ -466,12 +477,15 @@ export class ClaudeForObsidianView extends ItemView {
     searchInput.focus();
 
     // Dismiss on outside click or Esc, scoped to the containing window.
+    // Click on the trigger pill is excluded so the trigger's own click
+    // handler can toggle (mousedown fires before click, otherwise we'd
+    // remove here and reopen on the click).
     const dismiss = (e: MouseEvent) => {
-      if (!popup.contains(e.target as Node)) {
-        popup.remove();
-        doc.removeEventListener("mousedown", dismiss, true);
-        doc.removeEventListener("keydown", escDismiss, true);
-      }
+      if (popup.contains(e.target as Node)) return;
+      if (this.chatTitleEl.contains(e.target as Node)) return;
+      popup.remove();
+      doc.removeEventListener("mousedown", dismiss, true);
+      doc.removeEventListener("keydown", escDismiss, true);
     };
     const escDismiss = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -961,9 +975,23 @@ export class ClaudeForObsidianView extends ItemView {
     const links = el.querySelectorAll("a.internal-link");
     links.forEach((node) => {
       const a = node as HTMLAnchorElement;
+      const linkText = a.getAttr("href") || a.getAttr("data-href") || a.textContent || "";
+
+      // Resolution check on every render so links flip between resolved
+      // and placeholder states as the vault changes. Strip section
+      // anchors and aliases before resolving — `[[Foo#bar|baz]]` resolves
+      // against `Foo`. Placeholders get a class that styles them with
+      // Obsidian's faint/dashed treatment so they read as "this points
+      // nowhere yet" at a glance, matching the Knowledge Permaculture
+      // convention of treating placeholders as intentional graph seeds.
+      const linkpath = linkText.split("#")[0].split("|")[0];
+      const dest = linkpath
+        ? this.app.metadataCache.getFirstLinkpathDest(linkpath, "")
+        : null;
+      a.toggleClass("cfo-link-unresolved", !dest);
+
       if (a.dataset.cfoBound === "1") return;
       a.dataset.cfoBound = "1";
-      const linkText = a.getAttr("href") || a.getAttr("data-href") || a.textContent || "";
       a.addEventListener("click", (evt) => {
         evt.preventDefault();
         evt.stopPropagation();
@@ -1410,6 +1438,15 @@ export class ClaudeForObsidianView extends ItemView {
     inner.createSpan({ cls: "cfo-model-btn-effort", text: effort.label });
   }
 
+  private toggleModelMenu(): void {
+    const existing = this.containerEl.ownerDocument.querySelector(".cfo-model-popup");
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    this.openModelMenu();
+  }
+
   private openModelMenu(): void {
     openModelPopup({
       settings: this.plugin.settings,
@@ -1432,18 +1469,41 @@ export class ClaudeForObsidianView extends ItemView {
     });
   }
 
-  private openPlanUsagePopup(): void {
+  private togglePlanUsagePopup(): void {
+    this.toggleInfoPopup(
+      this.batteryEl,
+      "Plan usage",
+      "Coming soon. The CLI doesn't expose plan usage yet.",
+    );
+  }
+
+  /**
+   * Toggle a small info popup anchored above the given trigger element.
+   * Same contract as the plan-usage popup: click trigger to open, click
+   * trigger again to close, click outside to dismiss. Used by the
+   * battery (plan usage) and the bottom-nav placeholder buttons.
+   */
+  private toggleInfoPopup(triggerEl: HTMLElement, title: string, body: string): void {
+    const existing = this.containerEl.ownerDocument.querySelector(".cfo-plan-popup");
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    this.openInfoPopup(triggerEl, title, body);
+  }
+
+  private openInfoPopup(triggerEl: HTMLElement, title: string, body: string): void {
     const doc = this.containerEl.ownerDocument;
     const win = doc.defaultView!;
     doc.querySelectorAll(".cfo-plan-popup").forEach((el) => el.remove());
     const popup = doc.body.createDiv({ cls: "cfo-plan-popup" });
-    const rect = this.batteryEl.getBoundingClientRect();
+    const rect = triggerEl.getBoundingClientRect();
     popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
     // Anchor by left edge first, then clamp to viewport so a narrow
     // panel near the right edge doesn't overflow the screen.
     popup.style.left = "0px";
-    popup.createDiv({ cls: "cfo-plan-popup-title", text: "Plan usage" });
-    popup.createDiv({ cls: "cfo-plan-popup-body", text: "Coming soon. The CLI doesn't expose plan usage yet." });
+    popup.createDiv({ cls: "cfo-plan-popup-title", text: title });
+    popup.createDiv({ cls: "cfo-plan-popup-body", text: body });
     // Now we know the popup's actual width — clamp.
     const margin = 8;
     const desiredLeft = rect.left;
@@ -1451,10 +1511,13 @@ export class ClaudeForObsidianView extends ItemView {
     const clamped = Math.max(margin, Math.min(desiredLeft, maxLeft));
     popup.style.left = `${clamped}px`;
     const dismiss = (e: MouseEvent) => {
-      if (!popup.contains(e.target as Node)) {
-        popup.remove();
-        doc.removeEventListener("mousedown", dismiss, true);
-      }
+      // Click inside popup → leave alone. Click on trigger → let the
+      // trigger's click handler toggle (don't pre-empt by removing here,
+      // because mousedown fires before click and we'd just re-open).
+      if (popup.contains(e.target as Node)) return;
+      if (triggerEl.contains(e.target as Node)) return;
+      popup.remove();
+      doc.removeEventListener("mousedown", dismiss, true);
     };
     setTimeout(() => doc.addEventListener("mousedown", dismiss, true), 0);
   }

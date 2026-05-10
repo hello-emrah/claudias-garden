@@ -296,6 +296,20 @@
   color: var(--text-muted);
 }
 
+/* Unresolved wikilinks. Match Obsidian's native treatment so a
+   placeholder reads as "this points nowhere yet" at a glance. Falls
+   back to a faint dashed underline if the theme doesn't define
+   --link-unresolved-color. */
+.cfo-link-unresolved,
+.cfo-link-unresolved:hover {
+  color: var(--link-unresolved-color, var(--text-faint));
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: from-font;
+  text-underline-offset: 2px;
+  opacity: var(--link-unresolved-opacity, 1);
+}
+
 /* Claude turn wrapper. One per agent turn, opens at the first agent
    event (narration text, tool_use, or final prose) and stays open
    until the next user message. The CLAUDE header sits once at the top

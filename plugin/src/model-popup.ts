@@ -84,11 +84,14 @@ export function openModelPopup(ctx: ModelPopupContext): void {
 
   // Dismiss handlers
   const dismiss = (e: MouseEvent) => {
-    if (!popup.contains(e.target as Node)) {
-      popup.remove();
-      doc.removeEventListener("mousedown", dismiss, true);
-      doc.removeEventListener("keydown", esc, true);
-    }
+    // Click inside popup → leave alone. Click on trigger → let the
+    // trigger's click handler toggle (don't pre-empt by removing here,
+    // because mousedown fires before click and we'd just re-open).
+    if (popup.contains(e.target as Node)) return;
+    if (ctx.triggerEl.contains(e.target as Node)) return;
+    popup.remove();
+    doc.removeEventListener("mousedown", dismiss, true);
+    doc.removeEventListener("keydown", esc, true);
   };
   const esc = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
