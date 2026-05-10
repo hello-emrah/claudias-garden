@@ -24,6 +24,10 @@ export function openModelPopup(ctx: ModelPopupContext): void {
   popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
   popup.style.right = `${Math.max(8, win.innerWidth - rect.right)}px`;
 
+  // Mark the trigger as active so its hover styling persists while the
+  // popup is open. Cleared on every close path below.
+  ctx.triggerEl.addClass("cfo-btn-active");
+
   // Models section
   popup.createDiv({ cls: "cfo-model-popup-section-label", text: "Models" });
   for (const m of MODEL_OPTIONS) {
@@ -44,6 +48,7 @@ export function openModelPopup(ctx: ModelPopupContext): void {
     row.onclick = async (e) => {
       e.stopPropagation();
       await ctx.onModelChange(m.id);
+      ctx.triggerEl.removeClass("cfo-btn-active");
       popup.remove();
     };
   }
@@ -63,6 +68,7 @@ export function openModelPopup(ctx: ModelPopupContext): void {
     row.onclick = async (evt) => {
       evt.stopPropagation();
       await ctx.onEffortChange(e.id);
+      ctx.triggerEl.removeClass("cfo-btn-active");
       popup.remove();
     };
   }
@@ -79,6 +85,7 @@ export function openModelPopup(ctx: ModelPopupContext): void {
   fastRow.onclick = async (e) => {
     e.stopPropagation();
     await ctx.onFastModeChange(!ctx.settings.fastMode);
+    ctx.triggerEl.removeClass("cfo-btn-active");
     popup.remove();
   };
 
@@ -89,12 +96,14 @@ export function openModelPopup(ctx: ModelPopupContext): void {
     // because mousedown fires before click and we'd just re-open).
     if (popup.contains(e.target as Node)) return;
     if (ctx.triggerEl.contains(e.target as Node)) return;
+    ctx.triggerEl.removeClass("cfo-btn-active");
     popup.remove();
     doc.removeEventListener("mousedown", dismiss, true);
     doc.removeEventListener("keydown", esc, true);
   };
   const esc = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
+      ctx.triggerEl.removeClass("cfo-btn-active");
       popup.remove();
       doc.removeEventListener("mousedown", dismiss, true);
       doc.removeEventListener("keydown", esc, true);

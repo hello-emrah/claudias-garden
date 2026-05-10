@@ -75,6 +75,7 @@ export function exportSession(opts: {
     if (evt.type === "user" && evt.message?.content) {
       const content = evt.message.content;
       if (typeof content === "string") {
+        if (isSkillInjection(content)) continue;
         turns.push({
           role: "user",
           timestamp: evt.timestamp || "",
@@ -98,10 +99,12 @@ export function exportSession(opts: {
           }
         }
         if (texts.length) {
+          const joined = texts.join("\n");
+          if (isSkillInjection(joined)) continue;
           turns.push({
             role: "user",
             timestamp: evt.timestamp || "",
-            text: texts.join("\n"),
+            text: joined,
             toolUses: [],
           });
         }
@@ -327,6 +330,14 @@ function todayDate(): string {
 
 function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n);
+}
+
+// Skill-injection detection. When the agent invokes a skill, Claude
+// Code emits a separate `user` text message carrying the SKILL.md body
+// for the model's context. The message always starts with this prefix.
+// Mirrors the same check in view.ts — both surfaces filter consistently.
+function isSkillInjection(text: string): boolean {
+  return text.trimStart().startsWith("Base directory for this skill:");
 }
 
 function slugify(s: string): string {

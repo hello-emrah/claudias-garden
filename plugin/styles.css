@@ -52,6 +52,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-bottom: 4px;
 }
 
 .cfo-chat-title-tab {
@@ -64,18 +65,28 @@
   padding: 0 8px 0 10px;
   font-size: var(--font-ui-small);
   color: var(--text-muted);
-  background: var(--interactive-normal);
-  border: none;
+  /* !important on these defaults beats Obsidian's higher-specificity
+     button:not(.mod-cta) etc. selectors. Without it the default Obsidian
+     button bg / shadow / border leaks through and the pill reads as a
+     framed button instead of flat text. */
+  background: transparent !important;
+  border: none !important;
   border-radius: 4px;
+  box-shadow: none !important;
   min-width: 0;
   cursor: pointer;
   transition: color 120ms ease, background 120ms ease;
 }
 
-.cfo-chat-title-tab:hover {
+.cfo-chat-title-tab:hover,
+.cfo-chat-title-tab.cfo-btn-active {
   color: var(--text-normal);
-  background: var(--background-modifier-hover);
-  box-shadow: none;
+  /* !important here too so the :hover / .cfo-btn-active state can beat
+     the !important on the default-state transparent background. Without
+     it, the default rule's !important wins regardless of which state
+     the element is in. */
+  background: var(--background-modifier-hover) !important;
+  box-shadow: none !important;
 }
 
 .cfo-chat-title-label {
@@ -115,17 +126,19 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 4px;
 }
 
-.cfo-header-btn:hover:not(:disabled) {
-  background: var(--background-modifier-hover);
-  color: var(--text-accent);
-  box-shadow: none;
+.cfo-header-btn:hover:not(:disabled),
+.cfo-header-btn.cfo-btn-active:not(:disabled) {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal);
+  box-shadow: none !important;
 }
 
 .cfo-header-btn:disabled,
@@ -366,6 +379,7 @@
   flex-direction: column;
   gap: 6px;
   margin-top: -12px;
+  padding-top: 8px;
 }
 
 .cfo-textbox {
@@ -397,17 +411,19 @@
   width: 28px;
   height: 28px;
   padding: 0;
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
-.cfo-footer-btn:hover:not(:disabled) {
-  background: transparent;
+.cfo-footer-btn:hover:not(:disabled),
+.cfo-footer-btn.cfo-btn-active:not(:disabled) {
+  background: var(--background-modifier-hover) !important;
   color: var(--text-normal);
-  box-shadow: none;
+  box-shadow: none !important;
 }
 
 .cfo-footer-btn:disabled,
@@ -431,8 +447,9 @@
   height: 24px;
   margin-bottom: 4px;
   padding: 0;
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
   border-radius: 4px;
   color: var(--text-muted);
   cursor: pointer;
@@ -440,9 +457,9 @@
 }
 
 .cfo-send-inline:hover {
-  color: var(--text-accent);
-  background: var(--background-modifier-hover);
-  box-shadow: none;
+  color: var(--text-normal);
+  background: var(--background-modifier-hover) !important;
+  box-shadow: none !important;
 }
 
 .cfo-send-inline .svg-icon {
@@ -619,20 +636,21 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   margin-right: 2px;
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 4px;
   cursor: pointer;
-  box-shadow: none;
+  box-shadow: none !important;
 }
 
-.cfo-battery:hover {
-  background: var(--background-modifier-hover);
-  border-radius: 4px;
-  box-shadow: none;
+.cfo-battery:hover,
+.cfo-battery.cfo-btn-active {
+  background: var(--background-modifier-hover) !important;
+  box-shadow: none !important;
 }
 
 .cfo-battery-ring {
@@ -652,15 +670,61 @@
   stroke: var(--cfo-battery-urgent, #c14a4a);
 }
 
+/* Edits picker on the left edge of the footer nav. Toggle between
+   Accept edits and Plan permission modes. Visual mirrors the model
+   button (text + chevron) so the two anchors of the footer nav read
+   as a matched pair. */
+.cfo-edits-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 6px 0 8px;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+.cfo-edits-btn:hover,
+.cfo-edits-btn.cfo-btn-active {
+  background: var(--background-modifier-hover) !important;
+  color: var(--text-normal);
+  box-shadow: none !important;
+}
+
+.cfo-edits-btn-label {
+  color: var(--text-normal);
+}
+
+.cfo-edits-btn-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.cfo-edits-btn-chevron .svg-icon {
+  width: 12px;
+  height: 12px;
+}
+
 /* Model + effort button on the right edge of the footer nav. */
 .cfo-model-btn {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  height: 24px;
+  height: 28px;
   padding: 0 8px;
-  background: transparent;
-  border: none;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
   border-radius: 4px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
@@ -668,10 +732,11 @@
   white-space: nowrap;
 }
 
-.cfo-model-btn:hover {
-  background: var(--background-modifier-hover);
+.cfo-model-btn:hover,
+.cfo-model-btn.cfo-btn-active {
+  background: var(--background-modifier-hover) !important;
   color: var(--text-normal);
-  box-shadow: none;
+  box-shadow: none !important;
 }
 
 .cfo-model-btn-inner {
@@ -809,6 +874,62 @@
 .cfo-model-popup-toggle-on .cfo-model-popup-toggle-knob {
   left: 15px;
   background: var(--text-on-accent);
+}
+
+/* Mode picker popup — anchored above the edits-picker on the left of
+   the bottom nav. Same visual contract as the model popup but with a
+   single section. */
+.cfo-mode-popup {
+  position: fixed;
+  z-index: 1100;
+  min-width: 200px;
+  max-width: calc(100vw - 16px);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  padding: 6px 0;
+  font-size: var(--font-ui-small);
+}
+
+.cfo-mode-popup-section-label {
+  padding: 6px 12px 4px 12px;
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+
+.cfo-mode-popup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--text-normal);
+}
+
+.cfo-mode-popup-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.cfo-mode-popup-row-active {
+  color: var(--text-accent);
+}
+
+.cfo-mode-popup-row-label {
+  flex: 1 1 auto;
+}
+
+.cfo-mode-popup-check {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-accent);
+}
+
+.cfo-mode-popup-check .svg-icon {
+  width: 14px;
+  height: 14px;
 }
 
 /* Plan usage placeholder popup. */

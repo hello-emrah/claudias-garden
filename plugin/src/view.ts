@@ -6,7 +6,7 @@ import { ClaudeRun, StreamEvent } from "./claude-client";
 import { exportSession } from "./chat-export";
 import { WikilinkSuggest } from "./wikilink-suggest";
 import { openModelPopup } from "./model-popup";
-import { MODEL_OPTIONS, EFFORT_OPTIONS } from "./settings";
+import { MODEL_OPTIONS, EFFORT_OPTIONS, MODE_OPTIONS, PermissionMode } from "./settings";
 import type ClaudeForObsidianPlugin from "./main";
 
 interface SessionSummary {
@@ -114,6 +114,7 @@ export class ClaudeForObsidianView extends ItemView {
   private statusEl!: HTMLDivElement;
   private batteryEl!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
+  private editsBtn!: HTMLButtonElement;
   private chatTitleEl!: HTMLButtonElement;
   private sendStopBtn!: HTMLButtonElement;
   private currentRun: ClaudeRun | null = null;
@@ -198,6 +199,10 @@ export class ClaudeForObsidianView extends ItemView {
     setIcon(this.sendStopBtn, "corner-down-left");
 
     const footerNav = inputStack.createDiv({ cls: "cfo-footer-nav" });
+
+    this.editsBtn = footerNav.createEl("button", { cls: "cfo-edits-btn" });
+    this.editsBtn.onclick = () => this.toggleModePopup();
+    this.refreshEditsBtn();
 
     const plusBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
     setIcon(plusBtn, "plus");
@@ -388,6 +393,7 @@ export class ClaudeForObsidianView extends ItemView {
   private toggleHistoryMenu(evt: MouseEvent): void {
     const existing = this.containerEl.ownerDocument.querySelector(".cfo-history-popup");
     if (existing) {
+      this.chatTitleEl.removeClass("cfo-btn-active");
       existing.remove();
       return;
     }
@@ -466,6 +472,7 @@ export class ClaudeForObsidianView extends ItemView {
         };
 
         row.onclick = () => {
+          this.chatTitleEl.removeClass("cfo-btn-active");
           popup.remove();
           this.switchToSession(s.id);
         };
@@ -476,6 +483,8 @@ export class ClaudeForObsidianView extends ItemView {
     searchInput.addEventListener("input", () => render(searchInput.value));
     searchInput.focus();
 
+    this.chatTitleEl.addClass("cfo-btn-active");
+
     // Dismiss on outside click or Esc, scoped to the containing window.
     // Click on the trigger pill is excluded so the trigger's own click
     // handler can toggle (mousedown fires before click, otherwise we'd
@@ -483,12 +492,14 @@ export class ClaudeForObsidianView extends ItemView {
     const dismiss = (e: MouseEvent) => {
       if (popup.contains(e.target as Node)) return;
       if (this.chatTitleEl.contains(e.target as Node)) return;
+      this.chatTitleEl.removeClass("cfo-btn-active");
       popup.remove();
       doc.removeEventListener("mousedown", dismiss, true);
       doc.removeEventListener("keydown", escDismiss, true);
     };
     const escDismiss = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        this.chatTitleEl.removeClass("cfo-btn-active");
         popup.remove();
         doc.removeEventListener("mousedown", dismiss, true);
         doc.removeEventListener("keydown", escDismiss, true);
@@ -1418,6 +1429,91 @@ export class ClaudeForObsidianView extends ItemView {
     void ns;
   }
 
+  /**
+   * Render the edits-picker label from the current `permissionMode`,
+   * pulling the human label from `MODE_OPTIONS`.
+   */
+  private refreshEditsBtn(): void {
+    if (!this.editsBtn) return;
+    this.editsBtn.empty();
+    const mode = this.plugin.settings.permissionMode;
+    const opt = MODE_OPTIONS.find((m) => m.id === mode);
+    const label = opt?.label ?? mode;
+    this.editsBtn.createSpan({ cls: "cfo-edits-btn-label", text: label });
+    const chevron = this.editsBtn.createSpan({ cls: "cfo-edits-btn-chevron" });
+    setIcon(chevron, "chevron-down");
+    this.editsBtn.title = `Permission mode: ${label}. Click to change.`;
+  }
+
+  private toggleModePopup(): void {
+    const existing = this.containerEl.ownerDocument.querySelector(".cfo-mode-popup");
+    if (existing) {
+      this.editsBtn.removeClass("cfo-btn-active");
+      existing.remove();
+      return;
+    }
+    this.openModePopup();
+  }
+
+  private openModePopup(): void {
+    const doc = this.containerEl.ownerDocument;
+    const win = doc.defaultView!;
+    doc.querySelectorAll(".cfo-mode-popup").forEach((el) => el.remove());
+    const popup = doc.body.createDiv({ cls: "cfo-mode-popup" });
+    const rect = this.editsBtn.getBoundingClientRect();
+    popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
+    popup.style.left = `${Math.max(8, rect.left)}px`;
+
+    popup.createDiv({ cls: "cfo-mode-popup-section-label", text: "Mode" });
+    for (const m of MODE_OPTIONS) {
+      const row = popup.createDiv({ cls: "cfo-mode-popup-row" });
+      if (this.plugin.settings.permissionMode === m.id) row.addClass("cfo-mode-popup-row-active");
+      row.createSpan({ cls: "cfo-mode-popup-row-label", text: m.label });
+      if (this.plugin.settings.permissionMode === m.id) {
+        const check = row.createSpan({ cls: "cfo-mode-popup-check" });
+        setIcon(check, "check");
+      }
+      row.onclick = async (e) => {
+        e.stopPropagation();
+        this.plugin.settings.permissionMode = m.id as PermissionMode;
+        await this.plugin.saveSettings();
+        this.refreshEditsBtn();
+        this.editsBtn.removeClass("cfo-btn-active");
+        popup.remove();
+      };
+    }
+
+    // Clamp left so the popup doesn't overflow the right edge.
+    const margin = 8;
+    const maxLeft = win.innerWidth - popup.offsetWidth - margin;
+    if (popup.offsetLeft > maxLeft) {
+      popup.style.left = `${Math.max(margin, maxLeft)}px`;
+    }
+
+    this.editsBtn.addClass("cfo-btn-active");
+
+    const dismiss = (e: MouseEvent) => {
+      if (popup.contains(e.target as Node)) return;
+      if (this.editsBtn.contains(e.target as Node)) return;
+      this.editsBtn.removeClass("cfo-btn-active");
+      popup.remove();
+      doc.removeEventListener("mousedown", dismiss, true);
+      doc.removeEventListener("keydown", esc, true);
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        this.editsBtn.removeClass("cfo-btn-active");
+        popup.remove();
+        doc.removeEventListener("mousedown", dismiss, true);
+        doc.removeEventListener("keydown", esc, true);
+      }
+    };
+    setTimeout(() => {
+      doc.addEventListener("mousedown", dismiss, true);
+      doc.addEventListener("keydown", esc, true);
+    }, 0);
+  }
+
   private refreshModelBtn(): void {
     if (!this.modelBtn) return;
     this.modelBtn.empty();
@@ -1441,6 +1537,7 @@ export class ClaudeForObsidianView extends ItemView {
   private toggleModelMenu(): void {
     const existing = this.containerEl.ownerDocument.querySelector(".cfo-model-popup");
     if (existing) {
+      this.modelBtn.removeClass("cfo-btn-active");
       existing.remove();
       return;
     }
@@ -1484,8 +1581,12 @@ export class ClaudeForObsidianView extends ItemView {
    * battery (plan usage) and the bottom-nav placeholder buttons.
    */
   private toggleInfoPopup(triggerEl: HTMLElement, title: string, body: string): void {
-    const existing = this.containerEl.ownerDocument.querySelector(".cfo-plan-popup");
+    const existing = this.containerEl.ownerDocument.querySelector(
+      ".cfo-plan-popup",
+    ) as HTMLElement | null;
     if (existing) {
+      const prevTrigger = (existing as any).cfoTriggerEl as HTMLElement | undefined;
+      if (prevTrigger) prevTrigger.removeClass("cfo-btn-active");
       existing.remove();
       return;
     }
@@ -1497,6 +1598,9 @@ export class ClaudeForObsidianView extends ItemView {
     const win = doc.defaultView!;
     doc.querySelectorAll(".cfo-plan-popup").forEach((el) => el.remove());
     const popup = doc.body.createDiv({ cls: "cfo-plan-popup" });
+    // Stash the trigger so toggleInfoPopup() can clean up its active
+    // class even when the trigger isn't in scope at close time.
+    (popup as any).cfoTriggerEl = triggerEl;
     const rect = triggerEl.getBoundingClientRect();
     popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
     // Anchor by left edge first, then clamp to viewport so a narrow
@@ -1510,12 +1614,16 @@ export class ClaudeForObsidianView extends ItemView {
     const maxLeft = win.innerWidth - popup.offsetWidth - margin;
     const clamped = Math.max(margin, Math.min(desiredLeft, maxLeft));
     popup.style.left = `${clamped}px`;
+
+    triggerEl.addClass("cfo-btn-active");
+
     const dismiss = (e: MouseEvent) => {
       // Click inside popup → leave alone. Click on trigger → let the
       // trigger's click handler toggle (don't pre-empt by removing here,
       // because mousedown fires before click and we'd just re-open).
       if (popup.contains(e.target as Node)) return;
       if (triggerEl.contains(e.target as Node)) return;
+      triggerEl.removeClass("cfo-btn-active");
       popup.remove();
       doc.removeEventListener("mousedown", dismiss, true);
     };

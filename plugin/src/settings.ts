@@ -3,12 +3,19 @@ import type ClaudeForObsidianPlugin from "./main";
 
 export type ClaudeEffort = "low" | "medium" | "high" | "extra-high" | "max";
 
+export type PermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "auto"
+  | "bypassPermissions";
+
 export interface ClaudeForObsidianSettings {
   claudeBinaryPath: string;
   model: string;
   effort: ClaudeEffort;
   fastMode: boolean;
-  permissionMode: "acceptEdits" | "default" | "plan" | "bypassPermissions";
+  permissionMode: PermissionMode;
   activeSessionId: string | null;
   sessionLabels: Record<string, string>;
 }
@@ -37,6 +44,14 @@ export const EFFORT_OPTIONS: { id: ClaudeEffort; label: string }[] = [
   { id: "high", label: "High" },
   { id: "extra-high", label: "Extra high" },
   { id: "max", label: "Max" },
+];
+
+export const MODE_OPTIONS: { id: PermissionMode; label: string }[] = [
+  { id: "default", label: "Ask permissions" },
+  { id: "acceptEdits", label: "Accept edits" },
+  { id: "plan", label: "Plan mode" },
+  { id: "auto", label: "Auto mode" },
+  { id: "bypassPermissions", label: "Bypass permissions" },
 ];
 
 export class ClaudeForObsidianSettingTab extends PluginSettingTab {
@@ -79,18 +94,14 @@ export class ClaudeForObsidianSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Permission mode")
-      .setDesc("How the CLI handles tool permissions. 'default' will prompt and likely hang in headless mode. 'acceptEdits' is a sane starting point.")
-      .addDropdown((dd) =>
-        dd
-          .addOption("default", "default")
-          .addOption("acceptEdits", "acceptEdits")
-          .addOption("plan", "plan")
-          .addOption("bypassPermissions", "bypassPermissions")
-          .setValue(this.plugin.settings.permissionMode)
-          .onChange(async (value) => {
-            this.plugin.settings.permissionMode = value as ClaudeForObsidianSettings["permissionMode"];
-            await this.plugin.saveSettings();
-          })
-      );
+      .setDesc("How the CLI handles tool permissions. 'default' will prompt and likely hang in headless mode until permission UI lands. 'acceptEdits' is a sane starting point.")
+      .addDropdown((dd) => {
+        for (const m of MODE_OPTIONS) dd.addOption(m.id, m.label);
+        dd.setValue(this.plugin.settings.permissionMode);
+        dd.onChange(async (value) => {
+          this.plugin.settings.permissionMode = value as PermissionMode;
+          await this.plugin.saveSettings();
+        });
+      });
   }
 }
