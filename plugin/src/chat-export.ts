@@ -1,35 +1,10 @@
 import * as fs from "fs";
 
-interface ToolUse {
-  id: string;
-  name: string;
-  input: any;
-}
-
-interface ToolResult {
-  toolUseId: string;
-  content: string;
-  isError: boolean;
-}
-
 interface Turn {
   role: "user" | "assistant";
   timestamp: string;
   text: string;
-  toolUses: ToolUse[];
 }
-
-const MAX_TOOL_OUTPUT_CHARS = 6000;
-
-const LANG_BY_TOOL: Record<string, string> = {
-  Bash: "bash",
-  Read: "json",
-  Write: "json",
-  Edit: "json",
-  Glob: "json",
-  Grep: "json",
-  ToolSearch: "json",
-};
 
 export interface ExportResult {
   filename: string;
@@ -49,10 +24,6 @@ export function exportSession(opts: {
   }
 
   const turns: Turn[] = [];
-  const toolResultsById: Map<string, ToolResult> = new Map();
-  let sessionId = "";
-  let totalTokens = 0;
-  let totalDurationMs = 0;
   let createdISO = "";
   const datesSeen: Set<string> = new Set();
 
@@ -65,7 +36,6 @@ export function exportSession(opts: {
       continue;
     }
 
-    if (typeof evt.sessionId === "string" && !sessionId) sessionId = evt.sessionId;
     if (typeof evt.timestamp === "string" && !createdISO) createdISO = evt.timestamp;
     if (typeof evt.timestamp === "string") {
       const d = evt.timestamp.slice(0, 10);
@@ -80,22 +50,16 @@ export function exportSession(opts: {
           role: "user",
           timestamp: evt.timestamp || "",
           text: content,
-          toolUses: [],
         });
       } else if (Array.isArray(content)) {
+        // Skill-injection user messages and tool_result-only user messages
+        // both get filtered here. Skill injections are explicit. Tool
+        // results just produce empty `texts` and the `if (texts.length)`
+        // guard skips the push.
         const texts: string[] = [];
         for (const block of content) {
           if (block?.type === "text" && typeof block.text === "string") {
             texts.push(block.text);
-          } else if (block?.type === "tool_result" && block.tool_use_id) {
-            const tr: ToolResult = {
-              toolUseId: block.tool_use_id,
-              content: typeof block.content === "string"
-                ? block.content
-                : JSON.stringify(block.content),
-              isError: !!block.is_error,
-            };
-            toolResultsById.set(tr.toolUseId, tr);
           }
         }
         if (texts.length) {
@@ -105,7 +69,6 @@ export function exportSession(opts: {
             role: "user",
             timestamp: evt.timestamp || "",
             text: joined,
-            toolUses: [],
           });
         }
       }
@@ -113,41 +76,23 @@ export function exportSession(opts: {
     }
 
     if (evt.type === "assistant" && evt.message?.content) {
+      // Prose-only export: collect text blocks, ignore tool_use blocks.
+      // The visible chat panel renders tool calls; saved transcripts are
+      // distilled to the conversation thread.
       let text = "";
-      const tools: ToolUse[] = [];
       for (const block of evt.message.content) {
         if (block?.type === "text" && typeof block.text === "string") {
           text += block.text;
-        } else if (block?.type === "tool_use") {
-          tools.push({
-            id: block.id || "",
-            name: block.name || "tool",
-            input: block.input ?? {},
-          });
         }
       }
-      const usage = evt.message.usage;
-      if (usage) {
-        const turnTokens = (Number(usage.input_tokens) || 0)
-          + (Number(usage.output_tokens) || 0)
-          + (Number(usage.cache_creation_input_tokens) || 0)
-          + (Number(usage.cache_read_input_tokens) || 0);
-        if (turnTokens > totalTokens) totalTokens = turnTokens;
-      }
-      // Merge into the most recent assistant turn if it's part of the same response,
-      // otherwise start a new turn. We treat each assistant event as its own turn here
-      // and let consecutive ones render under one heading via grouping at output time.
+      // Each assistant event lands as its own turn. Consecutive
+      // assistant turns render under one heading via grouping at output
+      // time in renderBody.
       turns.push({
         role: "assistant",
         timestamp: evt.timestamp || "",
         text,
-        toolUses: tools,
       });
-      continue;
-    }
-
-    if (evt.type === "result") {
-      if (typeof evt.duration_ms === "number") totalDurationMs += evt.duration_ms;
       continue;
     }
   }
@@ -165,7 +110,6 @@ export function exportSession(opts: {
   const dateRange = Array.from(datesSeen).sort().reverse();
   const body = renderBody({
     turns,
-    toolResultsById,
     dateRange,
   });
 
@@ -174,7 +118,6 @@ export function exportSession(opts: {
 
 function renderBody(args: {
   turns: Turn[];
-  toolResultsById: Map<string, ToolResult>;
   dateRange: string[];
 }): string {
   const front = [
@@ -250,59 +193,6 @@ function demoteHeadings(body: string): string {
     const newLevel = Math.min(6, hashes.length + shift);
     return "#".repeat(newLevel) + " ";
   });
-}
-
-function renderToolBlock(tool: ToolUse, result: ToolResult | undefined): string {
-  const desc = pickDescription(tool);
-  const headerLine = desc
-    ? `> **Tool: ${tool.name}** — *${desc}*`
-    : `> **Tool: ${tool.name}**`;
-  const lang = LANG_BY_TOOL[tool.name] || "";
-  const inputText = pickInput(tool);
-  const inputFence = blockquoteFence(inputText, lang);
-  const outputContent = result ? truncate(result.content) : "";
-  const outputFence = result ? blockquoteFence(outputContent, "") : "";
-  const errorTag = result && result.isError ? "> *(error)*\n>" : "";
-  return [
-    headerLine,
-    ">",
-    inputFence,
-    ...(outputFence ? [">", outputFence] : []),
-    ...(errorTag ? [errorTag] : []),
-  ].join("\n");
-}
-
-function pickDescription(tool: ToolUse): string {
-  const i = tool.input;
-  if (!i || typeof i !== "object") return "";
-  if (typeof i.description === "string" && i.description.trim()) return i.description.trim();
-  if (typeof i.command === "string") {
-    const c = i.command.trim();
-    return c.length > 60 ? c.slice(0, 60) + "…" : c;
-  }
-  return "";
-}
-
-function pickInput(tool: ToolUse): string {
-  const i = tool.input;
-  if (!i || typeof i !== "object") return String(i ?? "");
-  if (typeof i.command === "string") return i.command;
-  return JSON.stringify(i, null, 2);
-}
-
-function blockquoteFence(content: string, lang: string): string {
-  const fence = "```";
-  const lines = [`> ${fence}${lang}`];
-  for (const line of content.split("\n")) {
-    lines.push(`> ${line}`);
-  }
-  lines.push(`> ${fence}`);
-  return lines.join("\n");
-}
-
-function truncate(s: string): string {
-  if (s.length <= MAX_TOOL_OUTPUT_CHARS) return s;
-  return s.slice(0, MAX_TOOL_OUTPUT_CHARS) + "\n... (truncated, full output in jsonl)";
 }
 
 function formatTime(iso: string): string {
