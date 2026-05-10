@@ -16,12 +16,13 @@ export interface ModelPopupContext {
 
 export function openModelPopup(ctx: ModelPopupContext): void {
   const doc = ctx.triggerEl.ownerDocument;
+  const win = doc.defaultView!;
   doc.querySelectorAll(".cfo-model-popup").forEach((el) => el.remove());
 
   const popup = doc.body.createDiv({ cls: "cfo-model-popup" });
   const rect = ctx.triggerEl.getBoundingClientRect();
-  popup.style.bottom = `${doc.defaultView!.innerHeight - rect.top + 6}px`;
-  popup.style.right = `${doc.defaultView!.innerWidth - rect.right}px`;
+  popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
+  popup.style.right = `${Math.max(8, win.innerWidth - rect.right)}px`;
 
   // Models section
   popup.createDiv({ cls: "cfo-model-popup-section-label", text: "Models" });

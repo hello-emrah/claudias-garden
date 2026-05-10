@@ -1,7 +1,7 @@
 {
   "id": "claude-for-obsidian",
   "name": "Claude for Obsidian",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "minAppVersion": "1.5.0",
   "description": "Drive the Claude Code CLI from inside Obsidian. Unofficial.",
   "author": "Emrah",

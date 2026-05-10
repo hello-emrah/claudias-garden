@@ -10,6 +10,11 @@
 .cfo-output {
   flex: 1;
   overflow-y: auto;
+  /* Reserve a gutter for the scrollbar even when content fits without
+     overflow, so expanding a tool group (or any state change that pushes
+     content past the viewport) doesn't reflow the right edge of the
+     chat to make room for a freshly appearing track. */
+  scrollbar-gutter: stable;
   font-family: var(--font-text);
   font-size: var(--font-ui-small);
   word-break: break-word;
@@ -291,6 +296,31 @@
   color: var(--text-muted);
 }
 
+/* Claude turn wrapper. One per agent turn, opens at the first agent
+   event (narration text, tool_use, or final prose) and stays open
+   until the next user message. The CLAUDE header sits once at the top
+   of the wrapper. All narration prose, tool groups, and final prose
+   for the turn append inside it, in stream order. */
+.cfo-turn-claude {
+  margin-bottom: 20px;
+}
+
+.cfo-turn-claude-role {
+  font-weight: 600;
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+
+/* Inside a Claude turn, prose blocks have no inner role chrome — the
+   wrapper carries the speaker label. Drop the bottom margin on the
+   `.cfo-message` wrapper so prose-then-tool-group spacing comes from
+   the top-margin rules below, not double-counted. */
+.cfo-turn-claude > .cfo-message-assistant {
+  margin-bottom: 0;
+}
+
 /* Trailing thinking indicator. Lives in the chat stream as the last
    child of the output container while a run is in flight. JS bumps it
    to the end on every new emission so it always sits below the most
@@ -506,9 +536,15 @@
   margin-bottom: 0;
 }
 
-/* Gap when prose returns after a tool group. */
-.cfo-tool-group + .cfo-message-assistant {
-  margin-top: 1em;
+/* Breathing room between siblings inside a Claude turn: prose →
+   tool group, tool group → prose, prose → prose. Top-margin on the
+   following sibling so the first child of the wrapper still sits
+   tight under the CLAUDE header. */
+.cfo-turn-claude > .cfo-message-assistant + .cfo-tool-group,
+.cfo-turn-claude > .cfo-tool-group + .cfo-message-assistant,
+.cfo-turn-claude > .cfo-tool-group + .cfo-tool-group,
+.cfo-turn-claude > .cfo-message-assistant + .cfo-message-assistant {
+  margin-top: 0.8em;
 }
 
 /* Generous breathing room between top-level blocks. Headings
@@ -658,6 +694,7 @@
   position: fixed;
   z-index: 1100;
   min-width: 240px;
+  max-width: calc(100vw - 16px);
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
@@ -765,7 +802,7 @@
   position: fixed;
   z-index: 1100;
   min-width: 240px;
-  max-width: 320px;
+  max-width: min(320px, calc(100vw - 16px));
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;

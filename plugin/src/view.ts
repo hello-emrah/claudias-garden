@@ -44,6 +44,9 @@ interface ToolGroup {
   runningByName: Map<string, number>;
   // Total ever-seen names in this group, used for the settled label.
   seenNames: string[];
+  // Skill IDs loaded inside this group, captured from `Skill` tool calls
+  // for surfacing in the settled header text.
+  loadedSkills: string[];
   expanded: boolean;
 }
 
@@ -125,6 +128,11 @@ export class ClaudeForObsidianView extends ItemView {
   private pendingTools: Map<string, { el: HTMLElement; startedAt: number; group: ToolGroup }> = new Map();
   private static readonly TOOL_MIN_VISIBLE_MS = 600;
   private currentToolGroup: ToolGroup | null = null;
+  // Per-turn wrapper for everything Claude emits in a single agent turn:
+  // narration prose, tool groups, final prose. The CLAUDE header sits
+  // once at the top of this wrapper. Reset to null when a user message
+  // lands (closes the turn) or `closeClaudeTurn` is called explicitly.
+  private currentClaudeTurn: HTMLElement | null = null;
   private trailingThinkingEl: HTMLElement | null = null;
   private trailingThinkingTimer: number | null = null;
 
@@ -561,6 +569,9 @@ export class ClaudeForObsidianView extends ItemView {
     this.plugin.settings.activeSessionId = id;
     this.plugin.saveSettings();
     this.outputEl.empty();
+    this.currentClaudeTurn = null;
+    this.currentToolGroup = null;
+    this.currentAssistant = null;
     this.sessionTokensUsed = 0;
     this.lastDateKey = null;
     this.renderBattery();
@@ -582,14 +593,70 @@ export class ClaudeForObsidianView extends ItemView {
     let pendingAssistantText = "";
     let pendingAssistantOpen = false;
     let pendingAssistantWhen: Date = new Date();
-    const flushAssistant = () => {
+    let replayGroup: ToolGroup | null = null;
+
+    const flushPendingProse = () => {
       if (!pendingAssistantOpen) return;
-      const buf = this.startAssistantBuffer(pendingAssistantWhen);
-      buf.text = pendingAssistantText;
-      this.flushAssistantRender(buf);
+      const text = pendingAssistantText;
       pendingAssistantText = "";
       pendingAssistantOpen = false;
+      if (!text.trim()) return;
+      const buf = this.startAssistantBuffer(pendingAssistantWhen);
+      buf.text = text;
+      this.flushAssistantRender(buf);
+      // Real narration broke the run of tool calls. Close the active
+      // group so the next tool_use opens a fresh one beneath the prose.
+      closeReplayGroup();
     };
+
+    const closeReplayGroup = () => {
+      if (!replayGroup) return;
+      replayGroup.el.removeClass("cfo-tool-group-running");
+      this.updateToolGroupHeader(replayGroup);
+      replayGroup = null;
+    };
+
+    const appendReplayToolRow = (name: string, input: any) => {
+      const summary = typeof input === "object" ? JSON.stringify(input) : String(input);
+      const truncated = summary.length > 240 ? summary.slice(0, 240) + "…" : summary;
+
+      // Build a settled group on first tool of a turn, inside the
+      // current Claude turn wrapper.
+      if (!replayGroup) {
+        const turn = this.ensureClaudeTurn(pendingAssistantWhen);
+        const el = turn.createDiv({ cls: "cfo-tool-group" });
+        const headerEl = el.createDiv({ cls: "cfo-tool-group-header" });
+        const chevron = headerEl.createSpan({ cls: "cfo-tool-group-chevron" });
+        setIcon(chevron, "chevron-down");
+        const statusEl = headerEl.createSpan({ cls: "cfo-tool-group-status", text: "Ran" });
+        const bodyEl = el.createDiv({ cls: "cfo-tool-group-body" });
+        replayGroup = {
+          el,
+          headerEl,
+          bodyEl,
+          statusEl,
+          runningByName: new Map(),
+          seenNames: [],
+          loadedSkills: [],
+          expanded: false,
+        };
+        const groupRef = replayGroup;
+        headerEl.onclick = () => {
+          groupRef.expanded = !groupRef.expanded;
+          groupRef.el.toggleClass("cfo-tool-group-expanded", groupRef.expanded);
+        };
+      }
+
+      if (!replayGroup.seenNames.includes(name)) replayGroup.seenNames.push(name);
+      if (name === "Skill" && input && typeof input.skill === "string") {
+        replayGroup.loadedSkills.push(input.skill);
+      }
+      const row = replayGroup.bodyEl.createDiv({ cls: "cfo-tool-row" });
+      row.createSpan({ cls: "cfo-tool-row-dot" });
+      row.createSpan({ cls: "cfo-tool-row-name", text: this.toolVerbForName(name) });
+      row.createSpan({ cls: "cfo-tool-row-args", text: truncated });
+    };
+
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       let evt: any;
@@ -600,17 +667,31 @@ export class ClaudeForObsidianView extends ItemView {
       }
       const when = typeof evt.timestamp === "string" ? new Date(evt.timestamp) : new Date();
       if (evt.type === "user" && evt.message) {
-        flushAssistant();
         const content = evt.message.content;
+        let userText = "";
         if (typeof content === "string") {
-          this.appendUserBlock(content, when);
+          userText = content;
         } else if (Array.isArray(content)) {
-          const texts = content
+          // Skill-injection messages carry their tool_result block first
+          // (handled separately) but the user-visible payload arrives as
+          // a separate user message whose first text block starts with
+          // "Base directory for this skill:". Suppress those.
+          const hasOnlyToolResults = content.every((b: any) => b?.type === "tool_result");
+          if (hasOnlyToolResults) continue; // already handled as tool result
+          userText = content
             .filter((b: any) => b?.type === "text" && typeof b.text === "string")
             .map((b: any) => b.text)
             .join("\n");
-          if (texts) this.appendUserBlock(texts, when);
         }
+        if (!userText) continue;
+        if (this.isSkillInjection(userText)) continue;
+        // Any pending assistant text at the moment a user turn lands is
+        // final prose from the previous turn. Flush, settle the tool
+        // group, then close the Claude turn so the user block lands at
+        // the top level.
+        flushPendingProse();
+        closeReplayGroup();
+        this.appendUserBlock(userText, when);
         continue;
       }
       if (evt.type === "assistant" && evt.message?.content) {
@@ -620,9 +701,11 @@ export class ClaudeForObsidianView extends ItemView {
             if (!pendingAssistantOpen) pendingAssistantOpen = true;
             pendingAssistantText += block.text;
           } else if (block.type === "tool_use") {
-            flushAssistant();
-            this.appendToolUse(null, block.name, block.input);
-            // Replays are historical; no running state.
+            // Pending assistant text is plain prose narration in the
+            // Claude turn. Flush it where it sits, then append the tool
+            // row beneath it in stream order.
+            flushPendingProse();
+            appendReplayToolRow(block.name, block.input);
           }
         }
         const usage = evt.message.usage;
@@ -633,7 +716,9 @@ export class ClaudeForObsidianView extends ItemView {
         continue;
       }
     }
-    flushAssistant();
+    flushPendingProse();
+    closeReplayGroup();
+    this.closeClaudeTurn();
     if (lastTokenTotal > 0) {
       this.sessionTokensUsed = lastTokenTotal;
       this.renderBattery();
@@ -650,6 +735,9 @@ export class ClaudeForObsidianView extends ItemView {
     this.pendingTitle = null;
     this.plugin.saveSettings();
     this.outputEl.empty();
+    this.currentClaudeTurn = null;
+    this.currentToolGroup = null;
+    this.currentAssistant = null;
     this.sessionTokensUsed = 0;
     this.lastDateKey = null;
     this.renderBattery();
@@ -755,6 +843,7 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private appendUserBlock(text: string, when: Date = new Date()): void {
+    this.closeClaudeTurn();
     this.maybeAppendDateDivider(when);
     const block = this.outputEl.createDiv({ cls: "cfo-message cfo-message-user" });
     const role = block.createDiv({ cls: "cfo-message-role" });
@@ -766,10 +855,37 @@ export class ClaudeForObsidianView extends ItemView {
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
   }
 
-  private startAssistantBuffer(when: Date = new Date()): AssistantBuffer {
+  /**
+   * Open (or return) the wrapper for the current Claude turn. Commits
+   * the CLAUDE header on first call. Every prose block, tool group, and
+   * final reply for the turn appends inside this wrapper.
+   */
+  private ensureClaudeTurn(when: Date = new Date()): HTMLElement {
+    if (this.currentClaudeTurn) return this.currentClaudeTurn;
     this.maybeAppendDateDivider(when);
-    const containerEl = this.outputEl.createDiv({ cls: "cfo-message cfo-message-assistant" });
-    containerEl.createDiv({ cls: "cfo-message-role", text: "Claude" });
+    const wrapper = this.outputEl.createDiv({ cls: "cfo-turn-claude" });
+    const role = wrapper.createDiv({ cls: "cfo-turn-claude-role" });
+    role.createSpan({ cls: "cfo-message-role-label", text: "Claude" });
+    this.currentClaudeTurn = wrapper;
+    this.bumpTrailingThinking();
+    this.outputEl.scrollTop = this.outputEl.scrollHeight;
+    return wrapper;
+  }
+
+  /**
+   * End the current Claude turn. Settles any open tool group, clears
+   * the assistant buffer pointer, and drops the wrapper reference so
+   * the next agent event opens a fresh turn.
+   */
+  private closeClaudeTurn(): void {
+    if (this.currentToolGroup) this.closeToolGroup();
+    this.currentAssistant = null;
+    this.currentClaudeTurn = null;
+  }
+
+  private startAssistantBuffer(when: Date = new Date()): AssistantBuffer {
+    const turn = this.ensureClaudeTurn(when);
+    const containerEl = turn.createDiv({ cls: "cfo-message cfo-message-assistant" });
     const bodyEl = containerEl.createDiv({ cls: "cfo-message-body" });
     this.bumpTrailingThinking();
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
@@ -893,7 +1009,8 @@ export class ClaudeForObsidianView extends ItemView {
 
   private ensureToolGroup(): ToolGroup {
     if (this.currentToolGroup) return this.currentToolGroup;
-    const el = this.outputEl.createDiv({ cls: "cfo-tool-group cfo-tool-group-running" });
+    const turn = this.ensureClaudeTurn();
+    const el = turn.createDiv({ cls: "cfo-tool-group cfo-tool-group-running" });
 
     const headerEl = el.createDiv({ cls: "cfo-tool-group-header" });
     const chevron = headerEl.createSpan({ cls: "cfo-tool-group-chevron" });
@@ -909,6 +1026,7 @@ export class ClaudeForObsidianView extends ItemView {
       statusEl,
       runningByName: new Map(),
       seenNames: [],
+      loadedSkills: [],
       expanded: false,
     };
 
@@ -928,13 +1046,23 @@ export class ClaudeForObsidianView extends ItemView {
       const activeName = [...group.runningByName.entries()].find(([, n]) => n > 0)?.[0];
       const verb = activeName ? this.toolVerbForName(activeName) : "Running";
       group.statusEl.setText(`${verb}…`);
-    } else {
-      // All settled.
-      const ranLabel = group.seenNames.length === 1
-        ? `Ran ${this.toolVerbForName(group.seenNames[0]).replace(/ing$/, "")}`
-        : `Ran ${group.seenNames.length} tools`;
-      group.statusEl.setText(ranLabel);
+      return;
     }
+    // All settled. Use original tool names (avoids past-tense lemma
+    // pitfalls like Write→Writ, Run→Runn).
+    const baseLabel =
+      group.seenNames.length === 1
+        ? `Ran ${group.seenNames[0]}`
+        : `Ran ${group.seenNames.length} tools`;
+    const skillTag = this.skillTagFor(group);
+    group.statusEl.setText(skillTag ? `${baseLabel} ${skillTag}` : baseLabel);
+  }
+
+  private skillTagFor(group: ToolGroup): string {
+    const skills = group.loadedSkills.filter((s, i, arr) => arr.indexOf(s) === i);
+    if (skills.length === 0) return "";
+    if (skills.length === 1) return `(loaded ${skills[0]} skill)`;
+    return `(loaded ${skills.join(", ")} skills)`;
   }
 
   private closeToolGroup(): void {
@@ -960,6 +1088,9 @@ export class ClaudeForObsidianView extends ItemView {
     const group = this.ensureToolGroup();
     if (!group.seenNames.includes(name)) group.seenNames.push(name);
     group.runningByName.set(name, (group.runningByName.get(name) ?? 0) + 1);
+    if (name === "Skill" && input && typeof input.skill === "string") {
+      group.loadedSkills.push(input.skill);
+    }
 
     const row = group.bodyEl.createDiv({ cls: "cfo-tool-row cfo-tool-row-running" });
     const dot = row.createSpan({ cls: "cfo-tool-row-dot" });
@@ -972,6 +1103,17 @@ export class ClaudeForObsidianView extends ItemView {
     this.bumpTrailingThinking();
 
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
+  }
+
+  /**
+   * Detect skill-injection user messages. Claude Code injects a skill
+   * body into the model context as a `user` text message that follows a
+   * `Skill` tool call. The body always starts with "Base directory for
+   * this skill:". Suppress these from the visible chat — they're
+   * mechanism, not conversation.
+   */
+  private isSkillInjection(text: string): boolean {
+    return text.trimStart().startsWith("Base directory for this skill:");
   }
 
   private toolVerbForName(name: string): string {
@@ -1292,13 +1434,22 @@ export class ClaudeForObsidianView extends ItemView {
 
   private openPlanUsagePopup(): void {
     const doc = this.containerEl.ownerDocument;
+    const win = doc.defaultView!;
     doc.querySelectorAll(".cfo-plan-popup").forEach((el) => el.remove());
     const popup = doc.body.createDiv({ cls: "cfo-plan-popup" });
     const rect = this.batteryEl.getBoundingClientRect();
-    popup.style.bottom = `${doc.defaultView!.innerHeight - rect.top + 6}px`;
-    popup.style.left = `${rect.left}px`;
+    popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
+    // Anchor by left edge first, then clamp to viewport so a narrow
+    // panel near the right edge doesn't overflow the screen.
+    popup.style.left = "0px";
     popup.createDiv({ cls: "cfo-plan-popup-title", text: "Plan usage" });
     popup.createDiv({ cls: "cfo-plan-popup-body", text: "Coming soon. The CLI doesn't expose plan usage yet." });
+    // Now we know the popup's actual width — clamp.
+    const margin = 8;
+    const desiredLeft = rect.left;
+    const maxLeft = win.innerWidth - popup.offsetWidth - margin;
+    const clamped = Math.max(margin, Math.min(desiredLeft, maxLeft));
+    popup.style.left = `${clamped}px`;
     const dismiss = (e: MouseEvent) => {
       if (!popup.contains(e.target as Node)) {
         popup.remove();
@@ -1343,7 +1494,12 @@ export class ClaudeForObsidianView extends ItemView {
         this.scheduleAssistantRender(this.currentAssistant);
         break;
       case "tool-use":
-        if (this.currentAssistant) this.flushAssistantRender(this.currentAssistant);
+        // Whatever assistant text was in flight is plain prose narration
+        // inside the current Claude turn. Lock it in where it sits — the
+        // tool group will append below it in stream order.
+        if (this.currentAssistant) {
+          this.flushAssistantRender(this.currentAssistant);
+        }
         this.currentAssistant = null;
         this.appendToolUse(e.id, e.name, e.input);
         break;
