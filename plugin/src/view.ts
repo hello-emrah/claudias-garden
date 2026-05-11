@@ -7,6 +7,7 @@ import { exportSession } from "./chat-export";
 import { WikilinkSuggest } from "./wikilink-suggest";
 import { openModelPopup } from "./model-popup";
 import { MODEL_OPTIONS, EFFORT_OPTIONS, MODE_OPTIONS, PermissionMode } from "./settings";
+import { renderToolRow, RenderOutput, ToolResult } from "./tool-renderers";
 import type ClaudeForObsidianPlugin from "./main";
 
 interface SessionSummary {
@@ -127,7 +128,10 @@ export class ClaudeForObsidianView extends ItemView {
   private lastStderr: string | null = null;
   private lastDateKey: string | null = null;
   private wikilinkSuggest: WikilinkSuggest | null = null;
-  private pendingTools: Map<string, { el: HTMLElement; startedAt: number; group: ToolGroup }> = new Map();
+  private pendingTools: Map<
+    string,
+    { el: HTMLElement; startedAt: number; group: ToolGroup; name: string; input: any }
+  > = new Map();
   private static readonly TOOL_MIN_VISIBLE_MS = 600;
   private currentToolGroup: ToolGroup | null = null;
   // Per-turn wrapper for everything Claude emits in a single agent turn:
@@ -624,6 +628,31 @@ export class ClaudeForObsidianView extends ItemView {
     let pendingAssistantWhen: Date = new Date();
     let replayGroup: ToolGroup | null = null;
 
+    // First pass: collect tool_use_id → result so the second-pass row
+    // renderers can paint result-aware suffixes (Bash stdout tail, Glob
+    // match count, error state) the same way the live path does.
+    const toolResultsById = new Map<string, ToolResult>();
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let evt: any;
+      try {
+        evt = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (evt.type !== "user" || !evt.message?.content) continue;
+      const content = evt.message.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block?.type !== "tool_result") continue;
+        const tid = typeof block.tool_use_id === "string" ? block.tool_use_id : null;
+        if (!tid) continue;
+        const c = typeof block.content === "string" ? block.content : JSON.stringify(block.content);
+        toolResultsById.set(tid, { content: c, isError: !!block.is_error });
+      }
+    }
+    const cwdForReplay = this.resolveCwd();
+
     const flushPendingProse = () => {
       if (!pendingAssistantOpen) return;
       const text = pendingAssistantText;
@@ -645,10 +674,7 @@ export class ClaudeForObsidianView extends ItemView {
       replayGroup = null;
     };
 
-    const appendReplayToolRow = (name: string, input: any) => {
-      const summary = typeof input === "object" ? JSON.stringify(input) : String(input);
-      const truncated = summary.length > 240 ? summary.slice(0, 240) + "…" : summary;
-
+    const appendReplayToolRow = (name: string, input: any, toolUseId: string | null) => {
       // Build a settled group on first tool of a turn, inside the
       // current Claude turn wrapper.
       if (!replayGroup) {
@@ -680,10 +706,11 @@ export class ClaudeForObsidianView extends ItemView {
       if (name === "Skill" && input && typeof input.skill === "string") {
         replayGroup.loadedSkills.push(input.skill);
       }
+      const result = toolUseId ? toolResultsById.get(toolUseId) ?? null : null;
+      const out = renderToolRow(name, input, result, { cwd: cwdForReplay, toolUseId });
       const row = replayGroup.bodyEl.createDiv({ cls: "cfo-tool-row" });
-      row.createSpan({ cls: "cfo-tool-row-dot" });
-      row.createSpan({ cls: "cfo-tool-row-name", text: this.toolVerbForName(name) });
-      row.createSpan({ cls: "cfo-tool-row-args", text: truncated });
+      if (result?.isError) row.addClass("cfo-tool-row-error");
+      this.paintToolRow(row, out, /*withDot=*/ true);
     };
 
     for (const line of raw.split("\n")) {
@@ -734,7 +761,7 @@ export class ClaudeForObsidianView extends ItemView {
             // Claude turn. Flush it where it sits, then append the tool
             // row beneath it in stream order.
             flushPendingProse();
-            appendReplayToolRow(block.name, block.input);
+            appendReplayToolRow(block.name, block.input, typeof block.id === "string" ? block.id : null);
           }
         }
         const usage = evt.message.usage;
@@ -1116,14 +1143,12 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private appendToolUse(id: string | null, name: string, input: any): void {
-    const summary = typeof input === "object" ? JSON.stringify(input) : String(input);
-    const truncated = summary.length > 240 ? summary.slice(0, 240) + "…" : summary;
+    const out = renderToolRow(name, input, null, { cwd: this.resolveCwd(), toolUseId: id });
 
     if (id === null) {
       // Replay path: render as a flat row outside any live group.
       const flat = this.outputEl.createDiv({ cls: "cfo-tool-row cfo-tool-row-replay" });
-      flat.createSpan({ cls: "cfo-tool-row-name", text: this.toolVerbForName(name) });
-      flat.createSpan({ cls: "cfo-tool-row-args", text: truncated });
+      this.paintToolRow(flat, out, /*withDot=*/ false);
       this.outputEl.scrollTop = this.outputEl.scrollHeight;
       return;
     }
@@ -1136,16 +1161,95 @@ export class ClaudeForObsidianView extends ItemView {
     }
 
     const row = group.bodyEl.createDiv({ cls: "cfo-tool-row cfo-tool-row-running" });
-    const dot = row.createSpan({ cls: "cfo-tool-row-dot" });
-    row.createSpan({ cls: "cfo-tool-row-name", text: this.toolVerbForName(name) });
-    row.createSpan({ cls: "cfo-tool-row-args", text: truncated });
-    void dot;
+    this.paintToolRow(row, out, /*withDot=*/ true);
 
-    this.pendingTools.set(id, { el: row, startedAt: Date.now(), group });
+    this.pendingTools.set(id, { el: row, startedAt: Date.now(), group, name, input });
     this.updateToolGroupHeader(group);
     this.bumpTrailingThinking();
 
     this.outputEl.scrollTop = this.outputEl.scrollHeight;
+  }
+
+  /**
+   * Paint a RenderOutput into a tool-row element. Re-entrant: callers
+   * pass an empty row first time (live tool_use, replay walk) and the
+   * same row a second time when the result settles (live only) — the
+   * function clears and rebuilds the row body.
+   */
+  private paintToolRow(row: HTMLElement, out: RenderOutput, withDot: boolean): void {
+    row.empty();
+    if (withDot) row.createSpan({ cls: "cfo-tool-row-dot" });
+
+    // Literal space text nodes between adjacent spans so a copy-paste of
+    // the panel preserves readable spacing. CSS margin gives the visual
+    // gap; the text node gives the character a paste needs.
+    if (out.flat) {
+      // Trivial-edit short-circuit: no pill, no chevron.
+      row.createSpan({ cls: "cfo-tool-row-name", text: out.verb });
+      row.appendText(" ");
+      row.createSpan({ cls: "cfo-tool-row-args", text: out.flat });
+      return;
+    }
+
+    const verbEl = row.createSpan({ cls: "cfo-tool-row-name" });
+    verbEl.setText(out.verb);
+    if (out.verb && out.target) row.appendText(" ");
+    const targetEl = row.createSpan({ cls: "cfo-tool-row-target" });
+    targetEl.setText(out.target);
+
+    // Coloured diff counts for Edit/Write. Renderer emits separate
+    // addCount / delCount fields so each side can carry its own tint
+    // (green for adds, red for dels) instead of a flat muted suffix.
+    const hasAdd = typeof out.addCount === "number" && out.addCount > 0;
+    const hasDel = typeof out.delCount === "number" && out.delCount > 0;
+    if (hasAdd || hasDel) {
+      row.appendText(" ");
+      if (hasAdd) {
+        row.createSpan({ cls: "cfo-tool-row-add-count", text: `+${out.addCount}` });
+      }
+      if (hasAdd && hasDel) row.appendText(" ");
+      if (hasDel) {
+        row.createSpan({ cls: "cfo-tool-row-del-count", text: `-${out.delCount}` });
+      }
+    } else if (out.suffix) {
+      // Suffix renderers already prepend whitespace (" (error)",
+      // " → output") inside the span, so no extra text node here.
+      row.createSpan({ cls: "cfo-tool-row-suffix", text: out.suffix });
+    }
+
+    if (out.expand) {
+      const chevron = row.createSpan({ cls: "cfo-tool-row-chevron" });
+      setIcon(chevron, "chevron-down");
+      const body = row.createDiv({ cls: "cfo-tool-row-expand" });
+      let painted = false;
+      let expanded = false;
+      const ensurePainted = () => {
+        if (!painted) {
+          out.expand!(body);
+          painted = true;
+        }
+      };
+      const toggle = (e: Event) => {
+        e.stopPropagation();
+        expanded = !expanded;
+        if (expanded) ensurePainted();
+        row.toggleClass("cfo-tool-row-expanded", expanded);
+      };
+      chevron.onclick = toggle;
+      // Clicking the row body (excluding the inner expand area) also
+      // toggles, matching the tool-group header pattern.
+      row.onclick = (e) => {
+        if ((e.target as HTMLElement)?.closest(".cfo-tool-row-expand")) return;
+        toggle(e);
+      };
+      // Open by default when the renderer asks (Edit / Write — diff
+      // visible the moment the row lands).
+      if (out.expandDefault) {
+        expanded = true;
+        ensurePainted();
+        row.addClass("cfo-tool-row-expanded");
+      }
+    }
   }
 
   /**
@@ -1177,7 +1281,7 @@ export class ClaudeForObsidianView extends ItemView {
     return verbs[name] ?? name;
   }
 
-  private settleToolResult(id: string | null, isError: boolean): void {
+  private settleToolResult(id: string | null, isError: boolean, content: string): void {
     if (!id) return;
     const entry = this.pendingTools.get(id);
     if (!entry) return;
@@ -1187,18 +1291,19 @@ export class ClaudeForObsidianView extends ItemView {
     const settle = () => {
       entry.el.removeClass("cfo-tool-row-running");
       if (isError) entry.el.addClass("cfo-tool-row-error");
-      // Decrement the running counter for this row's tool name. We don't
-      // store the name on the entry, so derive from the row text.
-      const nameEl = entry.el.querySelector(".cfo-tool-row-name");
-      const name = (nameEl?.textContent ?? "").trim();
-      const verb = name;
-      // Find the matching original tool name by reverse lookup of verb→name.
-      const originalName = this.originalNameForVerb(verb);
-      if (originalName) {
-        const remaining = (entry.group.runningByName.get(originalName) ?? 1) - 1;
-        if (remaining <= 0) entry.group.runningByName.delete(originalName);
-        else entry.group.runningByName.set(originalName, remaining);
-      }
+      // Re-render the row with the result in hand so suffixes (like
+      // Bash's stdout tail and Glob's match count) settle in.
+      const result: ToolResult = { content, isError };
+      const out = renderToolRow(entry.name, entry.input, result, {
+        cwd: this.resolveCwd(),
+        toolUseId: id,
+      });
+      this.paintToolRow(entry.el, out, /*withDot=*/ true);
+      // Decrement the running counter for this row's tool name. Direct
+      // lookup via the stored name — no reverse-verb walk.
+      const remaining = (entry.group.runningByName.get(entry.name) ?? 1) - 1;
+      if (remaining <= 0) entry.group.runningByName.delete(entry.name);
+      else entry.group.runningByName.set(entry.name, remaining);
       this.updateToolGroupHeader(entry.group);
     };
     if (wait === 0) settle();
@@ -1215,27 +1320,6 @@ export class ClaudeForObsidianView extends ItemView {
       this.updateToolGroupHeader(this.currentToolGroup);
       this.closeToolGroup();
     }
-  }
-
-  private originalNameForVerb(verb: string): string | null {
-    const verbs: Record<string, string> = {
-      Read: "Reading",
-      Write: "Writing",
-      Edit: "Editing",
-      Bash: "Running",
-      Glob: "Searching",
-      Grep: "Searching",
-      Task: "Delegating",
-      WebFetch: "Fetching",
-      WebSearch: "Searching",
-      ToolSearch: "Loading",
-      TodoWrite: "Planning",
-      NotebookEdit: "Editing",
-    };
-    for (const [k, v] of Object.entries(verbs)) {
-      if (v === verb) return k;
-    }
-    return verb;
   }
 
   private send(): void {
@@ -1746,7 +1830,7 @@ export class ClaudeForObsidianView extends ItemView {
         this.appendToolUse(e.id, e.name, e.input);
         break;
       case "tool-result":
-        this.settleToolResult(e.toolUseId, e.isError);
+        this.settleToolResult(e.toolUseId, e.isError, e.content);
         if (e.isError) {
           this.clearStatus();
           this.statusEl.setText(`Tool error.`);

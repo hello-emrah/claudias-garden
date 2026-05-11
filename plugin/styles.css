@@ -333,6 +333,127 @@
   color: var(--text-muted);
 }
 
+/* Per-tool idiomatic row chrome. The renderer in tool-renderers.ts
+   emits a verb + target (+ optional suffix and chevron-revealed expand
+   body). Replaces the legacy single .cfo-tool-row-args span. */
+.cfo-tool-row-target {
+  color: var(--text-normal);
+  margin-right: 6px;
+  font-family: var(--font-monospace);
+  font-size: 0.92em;
+}
+
+.cfo-tool-row-suffix {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.cfo-tool-row-add-count {
+  color: var(--text-success, #2ea043);
+  font-size: 0.9em;
+  font-family: var(--font-monospace);
+}
+
+.cfo-tool-row-del-count {
+  color: var(--text-error, #c14a4a);
+  font-size: 0.9em;
+  font-family: var(--font-monospace);
+}
+
+.cfo-tool-row-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  cursor: pointer;
+  color: var(--text-faint);
+  vertical-align: middle;
+  transition: transform 120ms ease;
+}
+
+.cfo-tool-row-chevron .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.cfo-tool-row:not(.cfo-tool-row-expanded) .cfo-tool-row-chevron {
+  transform: rotate(-90deg);
+}
+
+.cfo-tool-row-expand {
+  display: none;
+  margin-top: 6px;
+  padding: 6px 0 2px 0;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.cfo-tool-row-expanded > .cfo-tool-row-expand {
+  display: block;
+}
+
+/* Make rows with an expandable body click-friendly all the way across. */
+.cfo-tool-row:has(.cfo-tool-row-chevron) {
+  cursor: pointer;
+}
+
+/* Diff renderer (diff.ts). Reused by cfob-i4 permission-prompt edit
+   preview without modification. Line-level only — intra-line character
+   diff is intentionally out of scope. */
+.cfo-tool-diff {
+  font-family: var(--font-monospace);
+  font-size: 0.88em;
+  background: var(--background-secondary);
+  border-radius: 4px;
+  padding: 4px 0;
+  overflow-x: auto;
+  line-height: 1.45;
+}
+
+.cfo-tool-diff-line {
+  display: flex;
+  align-items: flex-start;
+  padding: 0 8px;
+  white-space: pre;
+}
+
+.cfo-tool-diff-line-add {
+  background: var(--text-success-bg, rgba(46, 160, 67, 0.12));
+  color: var(--text-success, #2ea043);
+}
+
+.cfo-tool-diff-line-del {
+  background: var(--text-error-bg, rgba(193, 74, 74, 0.12));
+  color: var(--text-error, #c14a4a);
+}
+
+.cfo-tool-diff-line-eq {
+  color: var(--text-muted);
+}
+
+.cfo-tool-diff-gutter {
+  display: inline-block;
+  min-width: 2.5ch;
+  text-align: right;
+  margin-right: 6px;
+  color: var(--text-faint);
+  user-select: none;
+  font-size: 0.85em;
+}
+
+.cfo-tool-diff-marker {
+  display: inline-block;
+  width: 1ch;
+  margin-right: 6px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.cfo-tool-diff-text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Unresolved wikilinks. Match Obsidian's native treatment so a
    placeholder reads as "this points nowhere yet" at a glance. Falls
    back to a faint dashed underline if the theme doesn't define
