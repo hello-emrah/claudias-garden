@@ -360,6 +360,178 @@
   font-family: var(--font-monospace);
 }
 
+/* Permission dialog (cfob-i4-permission-prompt, v0.5.0). Anchored
+   between the chat output and the input stack. Hidden by default;
+   shown via JS when the CLI emits a control_request can_use_tool. One
+   dialog at a time, additional requests queue. */
+.cfo-permission-dialog {
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: var(--font-ui-small);
+}
+
+.cfo-permission-dialog-hidden {
+  display: none !important;
+}
+
+.cfo-permission-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cfo-permission-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  flex: 0 0 auto;
+}
+
+.cfo-permission-title {
+  flex: 1;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.cfo-permission-badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: 0.85em;
+  text-transform: lowercase;
+}
+
+.cfo-permission-reason {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 0.92em;
+}
+
+.cfo-permission-reason-path {
+  margin-top: 4px;
+  font-family: var(--font-monospace);
+  color: var(--text-normal);
+  word-break: break-all;
+}
+
+.cfo-permission-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cfo-permission-path {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.cfo-permission-desc {
+  font-family: var(--font-monospace);
+  color: var(--text-normal);
+  word-break: break-word;
+}
+
+.cfo-permission-code {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cfo-permission-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cfo-permission-warning {
+  color: var(--text-error, #c14a4a);
+  font-size: 0.9em;
+}
+
+.cfo-permission-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.cfo-permission-spacer {
+  flex: 1;
+}
+
+.cfo-permission-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 0.95em;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.cfo-permission-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.cfo-permission-btn-allow {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.cfo-permission-btn-allow:hover {
+  background: var(--interactive-accent-hover, var(--interactive-accent));
+  filter: brightness(1.08);
+}
+
+.cfo-permission-btn-deny {
+  color: var(--text-muted);
+}
+
+.cfo-permission-chord {
+  font-family: var(--font-monospace);
+  font-size: 0.82em;
+  opacity: 0.75;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.cfo-permission-btn-allow .cfo-permission-chord {
+  background: rgba(255, 255, 255, 0.18);
+}
+
 .cfo-tool-row-chevron {
   display: inline-flex;
   align-items: center;

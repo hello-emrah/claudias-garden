@@ -2,7 +2,8 @@ import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, TFile, no
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { ClaudeRun, StreamEvent } from "./claude-client";
+import { ClaudeRun, StreamEvent, PermissionDecision } from "./claude-client";
+import { lineDiff, renderDiff } from "./diff";
 import { exportSession } from "./chat-export";
 import { WikilinkSuggest } from "./wikilink-suggest";
 import { openModelPopup } from "./model-popup";
@@ -134,6 +135,19 @@ export class ClaudeForObsidianView extends ItemView {
   > = new Map();
   private static readonly TOOL_MIN_VISIBLE_MS = 600;
   private currentToolGroup: ToolGroup | null = null;
+  // Permission dialog state — single instance anchored above the input
+  // stack. Pending requests beyond the active one queue FIFO.
+  private permissionDialogEl: HTMLDivElement | null = null;
+  private permissionQueue: Array<{
+    requestId: string;
+    toolUseId: string;
+    toolName: string;
+    input: any;
+    blockedPath?: string;
+    decisionReason?: string;
+  }> = [];
+  private activePermissionRequest: typeof this.permissionQueue[number] | null = null;
+  private permissionKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   // Per-turn wrapper for everything Claude emits in a single agent turn:
   // narration prose, tool groups, final prose. The CLAUDE header sits
   // once at the top of this wrapper. Reset to null when a user message
@@ -189,6 +203,11 @@ export class ClaudeForObsidianView extends ItemView {
       this.replaySession(this.activeSessionId);
     }
     this.refreshChatTitle();
+
+    // Permission dialog anchor — sits between the output and the input
+    // stack. Hidden until a control_request lands; one dialog at a time,
+    // additional requests queue FIFO.
+    this.permissionDialogEl = root.createDiv({ cls: "cfo-permission-dialog cfo-permission-dialog-hidden" });
 
     const inputStack = root.createDiv({ cls: "cfo-input-stack" });
 
@@ -1322,6 +1341,308 @@ export class ClaudeForObsidianView extends ItemView {
     }
   }
 
+  // ---------- permission dialog ----------
+
+  private enqueuePermissionRequest(req: {
+    requestId: string;
+    toolUseId: string;
+    toolName: string;
+    input: any;
+    blockedPath?: string;
+    decisionReason?: string;
+  }): void {
+    // Safe tools short-circuit — the PreToolUse hook fires for every
+    // tool the CLI runs, but the user only wants a dialog for the ones
+    // that actually mutate state or step outside the vault. Auto-allow
+    // here keeps the agent fluid for reads / searches / planning while
+    // still gating edits, writes, and shell commands.
+    if (!this.needsPermissionDialog(req.toolName, req.input)) {
+      if (this.currentRun) {
+        this.currentRun.respondPermission(req.requestId, {
+          behavior: "allow",
+          updatedInput: req.input ?? {},
+        });
+      }
+      return;
+    }
+    this.permissionQueue.push(req);
+    if (!this.activePermissionRequest) {
+      this.showNextPermissionRequest();
+    }
+  }
+
+  /** Decide whether a tool use warrants a dialog. Mirrors the rough
+   *  shape of the CLI's permission system but driven by the user's
+   *  chosen mode in the bottom-nav. Reads/searches inside the vault
+   *  are silent; writes, edits, and Bash always ask in default mode
+   *  and stay silent in acceptEdits / bypassPermissions. */
+  private needsPermissionDialog(toolName: string, input: any): boolean {
+    const mode = this.plugin.settings.permissionMode;
+    if (mode === "bypassPermissions") return false;
+
+    const isWrite = toolName === "Edit" || toolName === "Write" || toolName === "NotebookEdit";
+    if (isWrite) return mode !== "acceptEdits";
+    if (toolName === "Bash") return true;
+    if (toolName === "WebFetch" || toolName === "WebSearch") return mode === "default";
+    if (toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
+      const p =
+        typeof input?.file_path === "string"
+          ? input.file_path
+          : typeof input?.path === "string"
+            ? input.path
+            : "";
+      if (!p) return false;
+      const cwd = this.resolveCwd();
+      if (!cwd) return false;
+      return !p.startsWith(cwd);
+    }
+    // Task / TodoWrite / Skill / ToolSearch / NotebookRead / others —
+    // auto-allow. These are coordination tools, not file mutations.
+    return false;
+  }
+
+  private showNextPermissionRequest(): void {
+    const next = this.permissionQueue.shift();
+    if (!next) {
+      this.activePermissionRequest = null;
+      this.hidePermissionDialog();
+      return;
+    }
+    this.activePermissionRequest = next;
+    this.paintPermissionDialog(next);
+  }
+
+  private paintPermissionDialog(req: {
+    requestId: string;
+    toolUseId: string;
+    toolName: string;
+    input: any;
+    blockedPath?: string;
+    decisionReason?: string;
+  }): void {
+    const host = this.permissionDialogEl;
+    if (!host) return;
+    host.empty();
+    host.removeClass("cfo-permission-dialog-hidden");
+
+    // Header: title + session badge.
+    const header = host.createDiv({ cls: "cfo-permission-header" });
+    header.createSpan({ cls: "cfo-permission-dot" });
+    header.createSpan({
+      cls: "cfo-permission-title",
+      text: this.humanPermissionTitle(req.toolName, req.input),
+    });
+    header.createSpan({ cls: "cfo-permission-badge", text: "session" });
+
+    // Optional explanation strip — CLI tells us why the request fired
+    // (e.g. "outside working directory" with a blocked_path).
+    if (req.decisionReason || req.blockedPath) {
+      const reason = host.createDiv({ cls: "cfo-permission-reason" });
+      if (req.decisionReason) {
+        reason.createDiv({ cls: "cfo-permission-reason-text", text: req.decisionReason });
+      }
+      if (req.blockedPath) {
+        reason.createDiv({ cls: "cfo-permission-reason-path", text: req.blockedPath });
+      }
+    }
+
+    // Body: per-tool preview.
+    const body = host.createDiv({ cls: "cfo-permission-body" });
+    this.paintPermissionBody(req, body);
+
+    // Footer buttons.
+    const footer = host.createDiv({ cls: "cfo-permission-footer" });
+    const denyBtn = footer.createEl("button", { cls: "cfo-permission-btn cfo-permission-btn-deny" });
+    denyBtn.createSpan({ text: "Deny" });
+    denyBtn.createSpan({ cls: "cfo-permission-chord", text: "esc" });
+    denyBtn.onclick = () => this.settlePermissionRequest({ behavior: "deny", message: "User denied" });
+
+    const spacer = footer.createDiv({ cls: "cfo-permission-spacer" });
+    void spacer;
+
+    const allowBtn = footer.createEl("button", { cls: "cfo-permission-btn cfo-permission-btn-allow" });
+    allowBtn.createSpan({ text: "Allow once" });
+    allowBtn.createSpan({ cls: "cfo-permission-chord", text: "⌘⏎" });
+    allowBtn.onclick = () =>
+      this.settlePermissionRequest({ behavior: "allow", updatedInput: req.input ?? {} });
+
+    // Bind keyboard chords while the dialog is open. Esc denies; Cmd-Enter
+    // allows. Listener attaches at the document level so it works even if
+    // focus is in the textbox.
+    this.bindPermissionKeys();
+
+    // Surface to the user that a decision is pending — the panel's
+    // status line picks it up.
+    this.clearStatus();
+    this.statusEl.setText("Waiting for permission decision…");
+  }
+
+  private paintPermissionBody(
+    req: {
+      toolName: string;
+      input: any;
+    },
+    host: HTMLElement,
+  ): void {
+    const { toolName, input } = req;
+    if (toolName === "Edit") {
+      const filePath = typeof input?.file_path === "string" ? input.file_path : "";
+      host.createDiv({ cls: "cfo-permission-path", text: filePath });
+      const ops = lineDiff(
+        typeof input?.old_string === "string" ? input.old_string : "",
+        typeof input?.new_string === "string" ? input.new_string : "",
+      );
+      renderDiff(host, ops);
+      return;
+    }
+    if (toolName === "Write") {
+      const filePath = typeof input?.file_path === "string" ? input.file_path : "";
+      const content = typeof input?.content === "string" ? input.content : "";
+      host.createDiv({ cls: "cfo-permission-path", text: filePath });
+      renderDiff(host, lineDiff("", content));
+      return;
+    }
+    if (toolName === "NotebookEdit") {
+      const filePath = typeof input?.notebook_path === "string" ? input.notebook_path : "";
+      host.createDiv({ cls: "cfo-permission-path", text: filePath });
+      return;
+    }
+    if (toolName === "Read") {
+      const filePath = typeof input?.file_path === "string" ? input.file_path : "";
+      host.createDiv({ cls: "cfo-permission-path", text: filePath });
+      return;
+    }
+    if (toolName === "Bash") {
+      const cmd = typeof input?.command === "string" ? input.command : "";
+      const desc = typeof input?.description === "string" ? input.description : "";
+      if (desc) host.createDiv({ cls: "cfo-permission-desc", text: desc });
+      const codeEl = host.createEl("pre", { cls: "cfo-permission-code" });
+      codeEl.setText(cmd);
+      // Shape warnings — the spec calls out shell-style red flags worth
+      // surfacing inline so the user notices before approving.
+      const warnings = this.bashShapeWarnings(cmd);
+      if (warnings.length > 0) {
+        const warnEl = host.createDiv({ cls: "cfo-permission-warnings" });
+        for (const w of warnings) {
+          warnEl.createDiv({ cls: "cfo-permission-warning", text: `⚠ ${w}` });
+        }
+      }
+      return;
+    }
+    if (toolName === "Glob" || toolName === "Grep") {
+      const pattern = typeof input?.pattern === "string" ? input.pattern : "";
+      const p = typeof input?.path === "string" ? input.path : "";
+      host.createDiv({ cls: "cfo-permission-desc", text: pattern });
+      if (p) host.createDiv({ cls: "cfo-permission-path", text: p });
+      return;
+    }
+    if (toolName === "WebFetch") {
+      const url = typeof input?.url === "string" ? input.url : "";
+      host.createDiv({ cls: "cfo-permission-path", text: url });
+      return;
+    }
+    if (toolName === "WebSearch") {
+      const query = typeof input?.query === "string" ? input.query : "";
+      host.createDiv({ cls: "cfo-permission-desc", text: query });
+      return;
+    }
+    // Default: key:value preview.
+    const pre = host.createEl("pre", { cls: "cfo-permission-code" });
+    try {
+      pre.setText(JSON.stringify(input ?? {}, null, 2));
+    } catch {
+      pre.setText(String(input ?? ""));
+    }
+  }
+
+  private humanPermissionTitle(toolName: string, input: any): string {
+    const basename = (p: string) => {
+      if (typeof p !== "string" || !p) return "";
+      const slash = p.lastIndexOf("/");
+      return slash === -1 ? p : p.slice(slash + 1);
+    };
+    if (toolName === "Edit" || toolName === "Write" || toolName === "NotebookEdit") {
+      const name = basename(input?.file_path ?? input?.notebook_path ?? "");
+      return name ? `Allow Claude to edit ${name}?` : "Allow Claude to edit a file?";
+    }
+    if (toolName === "Read") {
+      const name = basename(input?.file_path ?? "");
+      return name ? `Allow Claude to read ${name}?` : "Allow Claude to read a file?";
+    }
+    if (toolName === "Bash") return "Allow Claude to run a command?";
+    if (toolName === "Glob" || toolName === "Grep") return "Allow Claude to search?";
+    if (toolName === "WebFetch") return "Allow Claude to fetch from the web?";
+    if (toolName === "WebSearch") return "Allow Claude to search the web?";
+    return `Allow Claude to use ${toolName}?`;
+  }
+
+  private bashShapeWarnings(cmd: string): string[] {
+    const warnings: string[] = [];
+    if (!cmd) return warnings;
+    // Backslash-escaped whitespace is a common copy-paste tell that a
+    // path got smuggled in — worth flagging.
+    if (/\\\s/.test(cmd)) warnings.push("Contains backslash-escaped whitespace");
+    // Unbalanced single or double quotes.
+    const singles = (cmd.match(/(?<!\\)'/g) ?? []).length;
+    const doubles = (cmd.match(/(?<!\\)"/g) ?? []).length;
+    if (singles % 2 !== 0) warnings.push("Unbalanced single quotes");
+    if (doubles % 2 !== 0) warnings.push("Unbalanced double quotes");
+    // Common destructive patterns.
+    if (/\brm\s+-rf?\s+\/\b/.test(cmd) || /\brm\s+-rf?\s+~\/?/.test(cmd))
+      warnings.push("Recursive rm targets a root or home path");
+    return warnings;
+  }
+
+  private settlePermissionRequest(decision: PermissionDecision): void {
+    const active = this.activePermissionRequest;
+    if (!active) return;
+    this.activePermissionRequest = null;
+    if (this.currentRun) {
+      this.currentRun.respondPermission(active.requestId, decision);
+    }
+    this.unbindPermissionKeys();
+    this.clearStatus();
+    // Show next queued, or hide.
+    this.showNextPermissionRequest();
+  }
+
+  private hidePermissionDialog(): void {
+    if (!this.permissionDialogEl) return;
+    this.permissionDialogEl.empty();
+    this.permissionDialogEl.addClass("cfo-permission-dialog-hidden");
+    this.unbindPermissionKeys();
+  }
+
+  private bindPermissionKeys(): void {
+    this.unbindPermissionKeys();
+    const handler = (e: KeyboardEvent) => {
+      if (!this.activePermissionRequest) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.settlePermissionRequest({ behavior: "deny", message: "User denied" });
+        return;
+      }
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        e.stopPropagation();
+        const input = this.activePermissionRequest.input ?? {};
+        this.settlePermissionRequest({ behavior: "allow", updatedInput: input });
+        return;
+      }
+    };
+    this.permissionKeyHandler = handler;
+    // Capture phase so we win over the textbox listeners.
+    document.addEventListener("keydown", handler, true);
+  }
+
+  private unbindPermissionKeys(): void {
+    if (this.permissionKeyHandler) {
+      document.removeEventListener("keydown", this.permissionKeyHandler, true);
+      this.permissionKeyHandler = null;
+    }
+  }
+
   private send(): void {
     const prompt = this.inputEl.value.trim();
     if (!prompt) return;
@@ -1829,6 +2150,9 @@ export class ClaudeForObsidianView extends ItemView {
         this.currentAssistant = null;
         this.appendToolUse(e.id, e.name, e.input);
         break;
+      case "permission-request":
+        this.enqueuePermissionRequest(e);
+        break;
       case "tool-result":
         this.settleToolResult(e.toolUseId, e.isError, e.content);
         if (e.isError) {
@@ -1862,6 +2186,12 @@ export class ClaudeForObsidianView extends ItemView {
         this.currentRun = null;
         this.currentAssistant = null;
         this.settleAllPendingTools();
+        // Subprocess gone — any open permission dialog is now orphaned.
+        // Drop the queue and hide the dialog rather than leaving a UI
+        // surface pointing at a dead pipe.
+        this.permissionQueue = [];
+        this.activePermissionRequest = null;
+        this.hidePermissionDialog();
         this.setBusy(false);
         if (e.code !== 0 && e.code !== null && !hadOutput) {
           const detail = this.lastStderr ? ` ${this.lastStderr.slice(0, 200)}` : "";
