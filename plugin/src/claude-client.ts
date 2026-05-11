@@ -36,21 +36,137 @@ export type PermissionDecision =
 
 const HOOK_CALLBACK_ID = "cfob-pretooluse";
 
-export interface RunOptions {
-  prompt: string;
+export interface SessionOptions {
   cwd: string;
   settings: ClaudeForObsidianSettings;
   resumeSessionId?: string | null;
   onEvent: (event: StreamEvent) => void;
 }
 
-export class ClaudeRun {
+/**
+ * One long-lived `claude` CLI subprocess per chat. Spawned lazily on
+ * the first sendMessage; stays alive across subsequent user messages
+ * in the same chat so in-memory state (CronCreate schedulers, watchers,
+ * model-side context) survives between turns.
+ *
+ * Lifecycle:
+ *   - new ClaudeSession({...}) — no side effects.
+ *   - session.sendMessage(prompt) — first call spawns, sends initialize
+ *     handshake, writes the user JSONL. Subsequent calls just write
+ *     the next user JSONL to the same stdin.
+ *   - session.respondPermission(id, decision) — writes a control_response
+ *     for a pending PreToolUse hook_callback.
+ *   - session.cancel() — sends an `interrupt` control_request. Subprocess
+ *     stays alive; user can send another message.
+ *   - session.end() — closes stdin so the CLI exits cleanly. Used on
+ *     chat switch, new chat, delete-active-chat, panel close, plugin
+ *     unload.
+ */
+export class ClaudeSession {
   private child: ChildProcessWithoutNullStreams | null = null;
-  private cancelled = false;
+  private initSent = false;
+  private alive = false;
+  private stdoutBuffer = "";
 
-  constructor(private opts: RunOptions) {}
+  constructor(private opts: SessionOptions) {}
 
-  start(): void {
+  /** True if a subprocess is currently running for this session. */
+  get isAlive(): boolean {
+    return this.alive;
+  }
+
+  /** Send a user message to the CLI. Spawns the subprocess on first
+   *  call. Idempotent across multiple turns within the same chat. */
+  sendMessage(prompt: string): void {
+    if (!this.alive) {
+      this.spawnChild();
+      if (!this.alive) return; // spawn failed; error event already emitted
+    }
+    if (!this.initSent) {
+      this.writeStdin(this.initializeRequest());
+      this.initSent = true;
+    }
+    const userMsg = {
+      type: "user",
+      message: { role: "user", content: prompt },
+      parent_tool_use_id: null,
+    };
+    this.writeStdin(userMsg);
+  }
+
+  /** Send an `interrupt` control_request to abort the current turn
+   *  without killing the subprocess. The CLI honours this by stopping
+   *  the in-flight model call and emitting a `result` event. */
+  cancel(): void {
+    if (!this.alive) return;
+    this.writeStdin({
+      type: "control_request",
+      request_id: this.makeRequestId(),
+      request: { subtype: "interrupt" },
+    });
+  }
+
+  /** Close stdin so the CLI exits cleanly. Triggered on chat switch,
+   *  new chat, delete-active-chat, panel close, plugin unload. */
+  end(): void {
+    if (this.child && this.child.stdin && !this.child.stdin.destroyed) {
+      try {
+        this.child.stdin.end();
+      } catch {
+        // already closed; harmless
+      }
+    }
+  }
+
+  /** Hard kill via SIGTERM. Used when end() doesn't bring the child
+   *  down (or when we don't want to wait). */
+  kill(): void {
+    this.end();
+    if (this.child && !this.child.killed) {
+      try {
+        this.child.kill("SIGTERM");
+      } catch {
+        // already dead; harmless
+      }
+    }
+  }
+
+  /** Send a structured control_response back to the CLI's stdin to
+   *  settle the PreToolUse hook callback. */
+  respondPermission(requestId: string, decision: PermissionDecision): void {
+    if (!this.alive) return;
+    const response =
+      decision.behavior === "allow"
+        ? {
+            decision: "approve",
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "allow",
+              permissionDecisionReason: "User approved via Claude for Obsidian",
+              updatedInput: decision.updatedInput,
+            },
+          }
+        : {
+            decision: "block",
+            hookSpecificOutput: {
+              hookEventName: "PreToolUse",
+              permissionDecision: "deny",
+              permissionDecisionReason: decision.message ?? "User denied via Claude for Obsidian",
+            },
+          };
+    this.writeStdin({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: requestId,
+        response,
+      },
+    });
+  }
+
+  // ---------- internals ----------
+
+  private spawnChild(): void {
     const args = [
       "--print",
       "--input-format",
@@ -92,52 +208,14 @@ export class ClaudeRun {
       return;
     }
     this.child = child;
+    this.alive = true;
 
-    // Initialize handshake — registers a PreToolUse hook so the CLI
-    // routes permission decisions back to us via hook_callback control
-    // requests. Without this the CLI auto-denies any tool call that
-    // would otherwise prompt the user (confirmed against the binary on
-    // 2026-05-11). Hook matches every tool; our hook handler decides
-    // whether to auto-allow safe operations or show the dialog.
-    const initMsg = {
-      type: "control_request",
-      request_id: this.makeRequestId(),
-      request: {
-        subtype: "initialize",
-        hooks: {
-          PreToolUse: [
-            {
-              matcher: "",
-              hookCallbackIds: [HOOK_CALLBACK_ID],
-              timeout: 600000,
-            },
-          ],
-        },
-      },
-    };
-    // stream-json input: after initialize, send the user message as a
-    // JSONL line. stdin stays open so we can write control_response
-    // lines back when the CLI emits hook_callback requests mid-turn.
-    // Closed on `result` or cancel so the CLI exits cleanly.
-    const userMsg = {
-      type: "user",
-      message: { role: "user", content: this.opts.prompt },
-      parent_tool_use_id: null,
-    };
-    try {
-      child.stdin.write(JSON.stringify(initMsg) + "\n");
-      child.stdin.write(JSON.stringify(userMsg) + "\n");
-    } catch (e: any) {
-      this.opts.onEvent({ kind: "error", message: `Failed to write to CLI: ${e.message}` });
-    }
-
-    let stdoutBuffer = "";
     child.stdout.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
+      this.stdoutBuffer += chunk.toString("utf8");
       let nl: number;
-      while ((nl = stdoutBuffer.indexOf("\n")) !== -1) {
-        const line = stdoutBuffer.slice(0, nl).trim();
-        stdoutBuffer = stdoutBuffer.slice(nl + 1);
+      while ((nl = this.stdoutBuffer.indexOf("\n")) !== -1) {
+        const line = this.stdoutBuffer.slice(0, nl).trim();
+        this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1);
         if (!line) continue;
         this.dispatchLine(line);
       }
@@ -155,74 +233,46 @@ export class ClaudeRun {
     });
 
     child.on("close", (code) => {
-      if (stdoutBuffer.trim()) this.dispatchLine(stdoutBuffer.trim());
+      if (this.stdoutBuffer.trim()) this.dispatchLine(this.stdoutBuffer.trim());
+      this.alive = false;
       this.opts.onEvent({ kind: "exit", code });
     });
   }
 
-  cancel(): void {
-    this.cancelled = true;
-    this.endStdin();
-    if (this.child && !this.child.killed) {
-      this.child.kill("SIGTERM");
-    }
-  }
-
-  /** Send a structured control_response back to the CLI's stdin to
-   *  settle the PreToolUse hook callback. The PermissionDecision is
-   *  translated into the CLI's expected hookSpecificOutput shape. */
-  respondPermission(requestId: string, decision: PermissionDecision): void {
-    if (!this.child || !this.child.stdin || this.child.stdin.destroyed) return;
-    const response =
-      decision.behavior === "allow"
-        ? {
-            decision: "approve",
-            hookSpecificOutput: {
-              hookEventName: "PreToolUse",
-              permissionDecision: "allow",
-              permissionDecisionReason: "User approved via Claude for Obsidian",
-              updatedInput: decision.updatedInput,
+  /** Build the initialize control_request that registers the PreToolUse
+   *  hook so the CLI routes permission decisions back to us. Without
+   *  this the CLI auto-denies any tool call that would otherwise prompt
+   *  the user (confirmed against the binary on 2026-05-11). */
+  private initializeRequest(): any {
+    return {
+      type: "control_request",
+      request_id: this.makeRequestId(),
+      request: {
+        subtype: "initialize",
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "",
+              hookCallbackIds: [HOOK_CALLBACK_ID],
+              timeout: 600000,
             },
-          }
-        : {
-            decision: "block",
-            hookSpecificOutput: {
-              hookEventName: "PreToolUse",
-              permissionDecision: "deny",
-              permissionDecisionReason: decision.message ?? "User denied via Claude for Obsidian",
-            },
-          };
-    const payload = {
-      type: "control_response",
-      response: {
-        subtype: "success",
-        request_id: requestId,
-        response,
+          ],
+        },
       },
     };
+  }
+
+  private writeStdin(payload: any): void {
+    if (!this.child || !this.child.stdin || this.child.stdin.destroyed) return;
     try {
       this.child.stdin.write(JSON.stringify(payload) + "\n");
     } catch (e: any) {
-      this.opts.onEvent({ kind: "error", message: `Failed to send permission response: ${e.message}` });
+      this.opts.onEvent({ kind: "error", message: `Failed to write to CLI: ${e.message}` });
     }
   }
 
-  /** Generate a random request id for our outbound control_requests
-   *  (initialize, etc.). Format matches the CLI's own usage — a UUID-ish
-   *  string. */
   private makeRequestId(): string {
     return `cfob-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  }
-
-  /** Close stdin so the CLI can exit cleanly after the turn lands. */
-  endStdin(): void {
-    if (this.child && this.child.stdin && !this.child.stdin.destroyed) {
-      try {
-        this.child.stdin.end();
-      } catch {
-        // already closed; harmless
-      }
-    }
   }
 
   private dispatchLine(line: string): void {
@@ -286,25 +336,20 @@ export class ClaudeRun {
       } else {
         // Unknown hook callback — return an empty success so the CLI
         // doesn't block waiting on a hook we didn't register.
-        try {
-          this.child?.stdin.write(
-            JSON.stringify({
-              type: "control_response",
-              response: { subtype: "success", request_id: evt.request_id, response: {} },
-            }) + "\n",
-          );
-        } catch {
-          // best-effort
-        }
+        this.writeStdin({
+          type: "control_response",
+          response: { subtype: "success", request_id: evt.request_id, response: {} },
+        });
       }
       return;
     }
     if (type === "result") {
+      // Turn landed. UNLIKE the per-turn architecture (≤ v0.5.1), we do
+      // not close stdin here — the subprocess stays alive for the next
+      // user message in this chat so in-memory state (cron schedulers,
+      // watchers) survives across turns. stdin closes on session.end()
+      // when the chat switches or the panel closes.
       this.opts.onEvent({ kind: "result", raw: evt });
-      // Turn landed. Close stdin so the CLI exits cleanly. Without this
-      // the child sits waiting for more stream-json input until we kill
-      // it on cancel — leaks subprocesses across turns.
-      this.endStdin();
       return;
     }
   }

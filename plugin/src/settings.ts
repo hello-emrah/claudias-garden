@@ -1,7 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type ClaudeForObsidianPlugin from "./main";
 
-export type ClaudeEffort = "low" | "medium" | "high" | "max";
+export type ClaudeEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type PermissionMode =
   | "default"
@@ -28,26 +28,33 @@ export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
   sessionLabels: {},
 };
 
-// Model IDs the `claude --model` flag actually accepts. Verified
-// 2026-05-11 against `claude --help`: the flag takes an alias
-// (`sonnet`, `opus`, `haiku`) or a full model name. The phantom `1m`
-// suffix (e.g. `claude-opus-4-7-1m`) was removed — it isn't a real
-// CLI-selectable model ID and the CLI returns "It may not exist or
-// you may not have access to it" when passed.
+// Model IDs the `claude --model` flag accepts. Re-verified 2026-05-12
+// against CLI v2.1.139 (native binary). The `opus[1m]` alias resolves
+// to `claude-opus-4-7` with the `context-1m-2025-08-07` beta header
+// applied — that's how the 1M context window is selected. Same shape
+// works for `sonnet[1m]` (Sonnet 4.6 with 1M). Both versions of Opus
+// 4.7 (standard 200k and 1M) are present in the native model picker;
+// CFOB now mirrors that. Earlier note about `claude-opus-4-7-1m`
+// being phantom still stands — `[1m]` is an alias suffix, not a model
+// ID suffix.
 export const MODEL_OPTIONS: { id: string; label: string; sublabel?: string; legacy?: boolean }[] = [
   { id: "claude-opus-4-7", label: "Opus 4.7" },
+  { id: "opus[1m]", label: "Opus 4.7", sublabel: "1M context" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+  { id: "sonnet[1m]", label: "Sonnet 4.6", sublabel: "1M context" },
   { id: "claude-haiku-4-5", label: "Haiku 4.5" },
   { id: "claude-opus-4-6", label: "Opus 4.6", sublabel: "Legacy", legacy: true },
 ];
 
-// Effort levels the `claude --effort` flag accepts. Verified
-// 2026-05-11 against `claude --help`: `low | medium | high | max`.
-// The previous `extra-high` was invented and isn't accepted by the CLI.
+// Effort levels the `claude --effort` flag accepts. Re-verified
+// 2026-05-12 against CLI v2.1.139: `low | medium | high | xhigh | max`.
+// `xhigh` is the new fifth level that 2.1.74 didn't expose; it sits
+// between `high` and `max` and matches the native picker's "Extra high".
 export const EFFORT_OPTIONS: { id: ClaudeEffort; label: string }[] = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
+  { id: "xhigh", label: "Extra high" },
   { id: "max", label: "Max" },
 ];
 

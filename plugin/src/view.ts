@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, TFile, no
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { ClaudeRun, StreamEvent, PermissionDecision } from "./claude-client";
+import { ClaudeSession, StreamEvent, PermissionDecision } from "./claude-client";
 import { lineDiff, renderDiff } from "./diff";
 import { exportSession } from "./chat-export";
 import { WikilinkSuggest } from "./wikilink-suggest";
@@ -106,9 +106,16 @@ const THINKING_VERBS = [
 
 const THINKING_ROTATE_MS = 3000;
 
-// Context window for the current default model. Hardcoded for now.
-// Increment 4 makes this model-aware via the model picker.
-const CONTEXT_WINDOW_TOKENS = 1_000_000;
+// Context window per model. The `[1m]` alias variants (opus[1m] /
+// sonnet[1m] / etc.) carry the 1M context beta. Everything else on
+// the Claude 4.x family is 200k. Unknown model IDs default to 200k —
+// the safer assumption (under-reporting room means the meter goes red
+// earlier, not later).
+function contextWindowForModel(modelId: string | null | undefined): number {
+  const id = (modelId ?? "").toLowerCase();
+  if (id.includes("[1m]")) return 1_000_000;
+  return 200_000;
+}
 
 export class ClaudeForObsidianView extends ItemView {
   private outputEl!: HTMLDivElement;
@@ -120,7 +127,15 @@ export class ClaudeForObsidianView extends ItemView {
   private micBtn!: HTMLButtonElement;
   private chatTitleEl!: HTMLButtonElement;
   private sendStopBtn!: HTMLButtonElement;
-  private currentRun: ClaudeRun | null = null;
+  // One subprocess per chat (v0.6.0). Stays alive across multiple
+  // user-message turns so in-memory state (CronCreate schedulers,
+  // watchers) survives between turns. End() is called on chat switch,
+  // new chat, delete-active-chat, and panel close.
+  private currentSession: ClaudeSession | null = null;
+  // True while a user-message turn is in flight (user message sent,
+  // result event not yet received). Used to gate UI affordances that
+  // require a quiescent session.
+  private turnBusy = false;
   private currentAssistant: AssistantBuffer | null = null;
   private renderComponent: Component = new Component();
   private activeSessionId: string | null = null;
@@ -261,7 +276,7 @@ export class ClaudeForObsidianView extends ItemView {
       if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         this.toggleSendStop();
-      } else if (e.key === "Escape" && this.currentRun) {
+      } else if (e.key === "Escape" && this.turnBusy) {
         e.preventDefault();
         this.cancel();
       }
@@ -273,7 +288,14 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    this.cancel();
+    // Tear the long-lived subprocess down so the CLI exits cleanly when
+    // the panel closes. Cancel just interrupts the in-flight turn; for
+    // full close-out we want stdin closed and SIGTERM as a fallback.
+    if (this.currentSession) {
+      this.currentSession.kill();
+      this.currentSession = null;
+    }
+    this.turnBusy = false;
     this.stopTrailingThinking();
     if (this.wikilinkSuggest) {
       this.wikilinkSuggest.destroy();
@@ -612,10 +634,13 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private switchToSession(id: string): void {
-    if (this.currentRun) {
+    if (this.turnBusy) {
       new Notice("Cannot switch chats while a run is in progress.");
       return;
     }
+    // End the existing long-lived subprocess before switching — the
+    // next chat gets its own session with its own --resume target.
+    this.endSession();
     this.activeSessionId = id;
     this.pendingTitle = null;
     this.plugin.settings.activeSessionId = id;
@@ -801,10 +826,13 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   newChat(): void {
-    if (this.currentRun) {
+    if (this.turnBusy) {
       new Notice("Cannot start a new chat while a run is in progress.");
       return;
     }
+    // End the existing long-lived subprocess — new chat means new
+    // session with no --resume.
+    this.endSession();
     this.activeSessionId = null;
     this.plugin.settings.activeSessionId = null;
     this.pendingTitle = null;
@@ -821,10 +849,13 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   deleteCurrentChat(): void {
-    if (this.currentRun) {
+    if (this.turnBusy) {
       new Notice("Cannot delete chat while a run is in progress.");
       return;
     }
+    // End the existing long-lived subprocess — the chat being deleted
+    // is the active one, so its session has no future.
+    this.endSession();
     const id = this.activeSessionId;
     if (!id) {
       new Notice("No active chat to delete.");
@@ -843,7 +874,7 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   async saveChatToVault(): Promise<void> {
-    if (this.currentRun) {
+    if (this.turnBusy) {
       new Notice("Cannot save chat while a run is in progress.");
       return;
     }
@@ -1357,8 +1388,8 @@ export class ClaudeForObsidianView extends ItemView {
     // here keeps the agent fluid for reads / searches / planning while
     // still gating edits, writes, and shell commands.
     if (!this.needsPermissionDialog(req.toolName, req.input)) {
-      if (this.currentRun) {
-        this.currentRun.respondPermission(req.requestId, {
+      if (this.currentSession) {
+        this.currentSession.respondPermission(req.requestId, {
           behavior: "allow",
           updatedInput: req.input ?? {},
         });
@@ -1597,8 +1628,8 @@ export class ClaudeForObsidianView extends ItemView {
     const active = this.activePermissionRequest;
     if (!active) return;
     this.activePermissionRequest = null;
-    if (this.currentRun) {
-      this.currentRun.respondPermission(active.requestId, decision);
+    if (this.currentSession) {
+      this.currentSession.respondPermission(active.requestId, decision);
     }
     this.unbindPermissionKeys();
     this.clearStatus();
@@ -1646,7 +1677,7 @@ export class ClaudeForObsidianView extends ItemView {
   private send(): void {
     const prompt = this.inputEl.value.trim();
     if (!prompt) return;
-    if (this.currentRun) {
+    if (this.turnBusy) {
       new Notice("A run is already in progress.");
       return;
     }
@@ -1668,23 +1699,55 @@ export class ClaudeForObsidianView extends ItemView {
     this.currentAssistant = null;
     this.setBusy(true);
     this.setThinking(true);
+    this.turnBusy = true;
 
-    const run = new ClaudeRun({
-      prompt,
-      cwd,
-      settings: this.plugin.settings,
-      resumeSessionId: this.activeSessionId,
-      onEvent: (e) => this.handleEvent(e),
-    });
-    this.currentRun = run;
-    run.start();
+    // Lazily create the long-lived session on the first message for
+    // this chat. Subsequent messages reuse the same subprocess — that
+    // keeps in-memory state (cron schedulers, watchers) alive across
+    // turns, which is the whole point of v0.6.0.
+    if (!this.currentSession) {
+      // Stale activeSessionId guard. The CLI exits with code 1 and
+      // `result.subtype = error_during_execution` if --resume points
+      // at a jsonl that no longer exists on disk (CLI session cleanup,
+      // jsonl manually deleted, etc.). Validate before spawn and drop
+      // the id if the session file is gone — the spawn then proceeds
+      // as a fresh session.
+      let resumeId = this.activeSessionId;
+      if (resumeId && !this.findSessionFile(resumeId)) {
+        new Notice("Previous session not found; starting fresh.");
+        this.activeSessionId = null;
+        this.plugin.settings.activeSessionId = null;
+        this.plugin.saveSettings();
+        resumeId = null;
+      }
+      this.currentSession = new ClaudeSession({
+        cwd,
+        settings: this.plugin.settings,
+        resumeSessionId: resumeId,
+        onEvent: (e) => this.handleEvent(e),
+      });
+    }
+    this.currentSession.sendMessage(prompt);
   }
 
   private cancel(): void {
-    if (this.currentRun) {
-      this.currentRun.cancel();
+    if (this.currentSession && this.turnBusy) {
+      // Interrupt control_request — subprocess stays alive, the CLI
+      // stops the in-flight model call and emits a result event. The
+      // user can immediately send another message in this chat.
+      this.currentSession.cancel();
       this.statusEl.setText("Cancelling…");
     }
+  }
+
+  /** End the long-lived subprocess for this chat. Used on chat switch,
+   *  new chat, delete-active-chat, panel close. */
+  private endSession(): void {
+    if (this.currentSession) {
+      this.currentSession.end();
+      this.currentSession = null;
+    }
+    this.turnBusy = false;
   }
 
   private setBusy(busy: boolean): void {
@@ -1764,18 +1827,25 @@ export class ClaudeForObsidianView extends ItemView {
 
   private tokensFromUsage(usage: any): number {
     if (!usage || typeof usage !== "object") return 0;
+    // Context-window usage for a single turn is the total input sent
+    // to the API for that turn: uncached input + cache-write tokens +
+    // cache-read tokens. Output is NOT included — it's the response,
+    // not part of the current turn's input. Output rolls into the
+    // next turn's input automatically via the cache prefix, so adding
+    // it here would double-count and the meter would drop to zero in
+    // ~10 turns even on a 1M context window (the v0.6.0 §08:11 bug).
     const input = Number(usage.input_tokens) || 0;
-    const output = Number(usage.output_tokens) || 0;
     const cacheCreate = Number(usage.cache_creation_input_tokens) || 0;
     const cacheRead = Number(usage.cache_read_input_tokens) || 0;
-    return input + output + cacheCreate + cacheRead;
+    return input + cacheCreate + cacheRead;
   }
 
   private renderBattery(): void {
     if (!this.batteryEl) return;
+    const window = contextWindowForModel(this.plugin.settings.model);
     const used = this.sessionTokensUsed;
-    const remaining = Math.max(0, CONTEXT_WINDOW_TOKENS - used);
-    const remainingPct = Math.max(0, Math.min(100, Math.round((remaining / CONTEXT_WINDOW_TOKENS) * 100)));
+    const remaining = Math.max(0, window - used);
+    const remainingPct = Math.max(0, Math.min(100, Math.round((remaining / window) * 100)));
 
     // SVG ring: 16px box, stroke 2.5, drains clockwise from full.
     const size = 16;
@@ -1964,6 +2034,9 @@ export class ClaudeForObsidianView extends ItemView {
         this.plugin.settings.model = id;
         await this.plugin.saveSettings();
         this.refreshModelBtn();
+        // Context window may have changed (1M ↔ 200k). Recalibrate
+        // the battery immediately so the user sees the new ceiling.
+        this.renderBattery();
       },
       onEffortChange: async (effort) => {
         this.plugin.settings.effort = effort;
@@ -2113,7 +2186,7 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private toggleSendStop(): void {
-    if (this.currentRun) {
+    if (this.turnBusy) {
       this.cancel();
     } else {
       this.send();
@@ -2169,6 +2242,17 @@ export class ClaudeForObsidianView extends ItemView {
           this.sessionTokensUsed = Math.max(this.sessionTokensUsed, turnTokens);
           this.renderBattery();
         }
+        // Turn landed. UNLIKE the per-turn architecture (≤ v0.5.1) the
+        // subprocess stays alive for the next user message in this chat.
+        // Just flip UI state — the session is now idle, ready for the
+        // next sendMessage. Flush any in-flight assistant prose,
+        // settle pending tools, drop the thinking indicator, ungrey
+        // the send button.
+        if (this.currentAssistant) this.flushAssistantRender(this.currentAssistant);
+        this.currentAssistant = null;
+        this.settleAllPendingTools();
+        this.turnBusy = false;
+        this.setBusy(false);
         this.setThinking(false);
         break;
       }
@@ -2183,12 +2267,16 @@ export class ClaudeForObsidianView extends ItemView {
       case "exit": {
         const hadOutput = !!this.currentAssistant;
         if (this.currentAssistant) this.flushAssistantRender(this.currentAssistant);
-        this.currentRun = null;
+        // Subprocess gone — session ended (clean) or died (unexpected).
+        // Either way the chat needs a fresh session next time the user
+        // sends. Null currentSession; next send() will lazy-create.
+        this.currentSession = null;
+        this.turnBusy = false;
         this.currentAssistant = null;
         this.settleAllPendingTools();
-        // Subprocess gone — any open permission dialog is now orphaned.
-        // Drop the queue and hide the dialog rather than leaving a UI
-        // surface pointing at a dead pipe.
+        // Any open permission dialog is now orphaned. Drop the queue
+        // and hide the dialog rather than leaving a UI surface pointing
+        // at a dead pipe.
         this.permissionQueue = [];
         this.activePermissionRequest = null;
         this.hidePermissionDialog();
