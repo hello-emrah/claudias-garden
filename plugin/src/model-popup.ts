@@ -11,7 +11,6 @@ export interface ModelPopupContext {
   triggerEl: HTMLElement;
   onModelChange: (id: string) => Promise<void> | void;
   onEffortChange: (effort: ClaudeEffort) => Promise<void> | void;
-  onFastModeChange: (enabled: boolean) => Promise<void> | void;
 }
 
 export function openModelPopup(ctx: ModelPopupContext): void {
@@ -72,22 +71,6 @@ export function openModelPopup(ctx: ModelPopupContext): void {
       popup.remove();
     };
   }
-
-  popup.createDiv({ cls: "cfo-model-popup-divider" });
-
-  // Fast mode section
-  popup.createDiv({ cls: "cfo-model-popup-section-label", text: "Fast mode" });
-  const fastRow = popup.createDiv({ cls: "cfo-model-popup-row cfo-model-popup-row-toggle" });
-  fastRow.createSpan({ cls: "cfo-model-popup-row-label", text: "Enable fast mode" });
-  const toggle = fastRow.createDiv({ cls: "cfo-model-popup-toggle" });
-  if (ctx.settings.fastMode) toggle.addClass("cfo-model-popup-toggle-on");
-  toggle.createDiv({ cls: "cfo-model-popup-toggle-knob" });
-  fastRow.onclick = async (e) => {
-    e.stopPropagation();
-    await ctx.onFastModeChange(!ctx.settings.fastMode);
-    ctx.triggerEl.removeClass("cfo-btn-active");
-    popup.remove();
-  };
 
   // Dismiss handlers
   const dismiss = (e: MouseEvent) => {

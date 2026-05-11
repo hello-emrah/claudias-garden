@@ -1,7 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type ClaudeForObsidianPlugin from "./main";
 
-export type ClaudeEffort = "low" | "medium" | "high" | "extra-high" | "max";
+export type ClaudeEffort = "low" | "medium" | "high" | "max";
 
 export type PermissionMode =
   | "default"
@@ -14,7 +14,6 @@ export interface ClaudeForObsidianSettings {
   claudeBinaryPath: string;
   model: string;
   effort: ClaudeEffort;
-  fastMode: boolean;
   permissionMode: PermissionMode;
   activeSessionId: string | null;
   sessionLabels: Record<string, string>;
@@ -24,25 +23,31 @@ export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
   claudeBinaryPath: "/opt/homebrew/bin/claude",
   model: "",
   effort: "high",
-  fastMode: false,
   permissionMode: "acceptEdits",
   activeSessionId: null,
   sessionLabels: {},
 };
 
+// Model IDs the `claude --model` flag actually accepts. Verified
+// 2026-05-11 against `claude --help`: the flag takes an alias
+// (`sonnet`, `opus`, `haiku`) or a full model name. The phantom `1m`
+// suffix (e.g. `claude-opus-4-7-1m`) was removed — it isn't a real
+// CLI-selectable model ID and the CLI returns "It may not exist or
+// you may not have access to it" when passed.
 export const MODEL_OPTIONS: { id: string; label: string; sublabel?: string; legacy?: boolean }[] = [
   { id: "claude-opus-4-7", label: "Opus 4.7" },
-  { id: "claude-opus-4-7-1m", label: "Opus 4.7", sublabel: "1M" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
   { id: "claude-haiku-4-5", label: "Haiku 4.5" },
   { id: "claude-opus-4-6", label: "Opus 4.6", sublabel: "Legacy", legacy: true },
 ];
 
+// Effort levels the `claude --effort` flag accepts. Verified
+// 2026-05-11 against `claude --help`: `low | medium | high | max`.
+// The previous `extra-high` was invented and isn't accepted by the CLI.
 export const EFFORT_OPTIONS: { id: ClaudeEffort; label: string }[] = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
-  { id: "extra-high", label: "Extra high" },
   { id: "max", label: "Max" },
 ];
 
@@ -79,22 +84,14 @@ export class ClaudeForObsidianSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
-      .setName("Model")
-      .setDesc("Optional. Passed as --model. Leave empty to use the CLI default.")
-      .addText((text) =>
-        text
-          .setPlaceholder("(CLI default)")
-          .setValue(this.plugin.settings.model)
-          .onChange(async (value) => {
-            this.plugin.settings.model = value.trim();
-            await this.plugin.saveSettings();
-          })
-      );
+    // Model and effort are managed via the bottom-nav popup in the
+    // chat panel — they are the canonical surface. The Settings tab
+    // text-field for Model was retired 2026-05-11 to prevent stale
+    // free-form strings ending up in `settings.model`.
 
     new Setting(containerEl)
       .setName("Permission mode")
-      .setDesc("How the CLI handles tool permissions. 'default' will prompt and likely hang in headless mode until permission UI lands. 'acceptEdits' is a sane starting point.")
+      .setDesc("How the CLI handles tool permissions. 'default' will prompt and likely hang in headless mode until permission UI lands. 'acceptEdits' is a sane starting point. The bottom-nav mode picker in the chat panel is the day-to-day surface.")
       .addDropdown((dd) => {
         for (const m of MODE_OPTIONS) dd.addOption(m.id, m.label);
         dd.setValue(this.plugin.settings.permissionMode);

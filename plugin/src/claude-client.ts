@@ -1,5 +1,11 @@
 import { spawn, ChildProcessWithoutNullStreams } from "child_process";
+import { EFFORT_OPTIONS } from "./settings";
 import type { ClaudeForObsidianSettings } from "./settings";
+
+// Validation set so a stale settings value (e.g. `extra-high` left over
+// from before the 2026-05-11 audit) doesn't get passed to the CLI and
+// trigger an "unknown effort" error.
+const VALID_EFFORTS = new Set<string>(EFFORT_OPTIONS.map((e) => e.id));
 
 export type StreamEvent =
   | { kind: "system"; raw: any }
@@ -36,6 +42,9 @@ export class ClaudeRun {
     ];
     if (this.opts.settings.model) {
       args.push("--model", this.opts.settings.model);
+    }
+    if (this.opts.settings.effort && VALID_EFFORTS.has(this.opts.settings.effort)) {
+      args.push("--effort", this.opts.settings.effort);
     }
     if (this.opts.resumeSessionId) {
       args.push("--resume", this.opts.resumeSessionId);

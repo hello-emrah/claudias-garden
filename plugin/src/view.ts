@@ -115,6 +115,7 @@ export class ClaudeForObsidianView extends ItemView {
   private batteryEl!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
   private editsBtn!: HTMLButtonElement;
+  private micBtn!: HTMLButtonElement;
   private chatTitleEl!: HTMLButtonElement;
   private sendStopBtn!: HTMLButtonElement;
   private currentRun: ClaudeRun | null = null;
@@ -209,11 +210,15 @@ export class ClaudeForObsidianView extends ItemView {
     plusBtn.title = "Add (coming soon)";
     plusBtn.onclick = () => this.togglePlusMenu(plusBtn);
 
-    const micBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
-    setIcon(micBtn, "mic");
-    micBtn.title = "Voice input (coming soon)";
-    micBtn.onclick = () =>
-      this.toggleInfoPopup(micBtn, "Voice input", "Coming soon. Speech-to-text for the chat input.");
+    this.micBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
+    setIcon(this.micBtn, "mic");
+    this.micBtn.title = "Voice input (not available)";
+    this.micBtn.onclick = () =>
+      this.toggleInfoPopup(
+        this.micBtn,
+        "Voice input",
+        "Web Speech API isn't wired in Obsidian's Electron build (Chromium routes recognition through Google's service, which requires an API key the embedder doesn't ship). Use macOS dictation (Edit → Start Dictation, or the fn fn shortcut) on the input area as the current workaround.",
+      );
 
     footerNav.createDiv({ cls: "cfo-footer-spacer" });
 
@@ -1516,8 +1521,11 @@ export class ClaudeForObsidianView extends ItemView {
   private refreshModelBtn(): void {
     if (!this.modelBtn) return;
     this.modelBtn.empty();
-    const modelId = this.plugin.settings.model || MODEL_OPTIONS[1].id;
-    const model = MODEL_OPTIONS.find((m) => m.id === modelId) ?? MODEL_OPTIONS[1];
+    // When settings.model is empty the CLI picks its own default; fall
+    // back to the first MODEL_OPTIONS entry for the button label so the
+    // user sees something sensible rather than nothing.
+    const modelId = this.plugin.settings.model || MODEL_OPTIONS[0].id;
+    const model = MODEL_OPTIONS.find((m) => m.id === modelId) ?? MODEL_OPTIONS[0];
     const effortId = this.plugin.settings.effort;
     const effort = EFFORT_OPTIONS.find((e) => e.id === effortId) ?? EFFORT_OPTIONS[2];
 
@@ -1554,11 +1562,6 @@ export class ClaudeForObsidianView extends ItemView {
       },
       onEffortChange: async (effort) => {
         this.plugin.settings.effort = effort;
-        await this.plugin.saveSettings();
-        this.refreshModelBtn();
-      },
-      onFastModeChange: async (enabled) => {
-        this.plugin.settings.fastMode = enabled;
         await this.plugin.saveSettings();
         this.refreshModelBtn();
       },
