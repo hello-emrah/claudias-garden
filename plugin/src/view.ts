@@ -215,7 +215,7 @@ export class ClaudeForObsidianView extends ItemView {
 
     const textBox = inputStack.createDiv({ cls: "cfo-textbox" });
     this.inputEl = textBox.createEl("textarea", { cls: "cfo-input" });
-    this.inputEl.placeholder = "Type / for commands";
+    this.inputEl.placeholder = "Type / for commands, [[ for wikilinks";
     this.inputEl.rows = 1;
     this.autosizeInput();
 
