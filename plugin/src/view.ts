@@ -117,6 +117,71 @@ function contextWindowForModel(modelId: string | null | undefined): number {
   return 200_000;
 }
 
+// Read-only shell commands the agent runs constantly for orientation
+// — date, echo, ls, pwd, cat, head, tail, wc, find, file, which,
+// whoami, hostname, uname, ps, stat, du, df, env, locale, grep / rg /
+// ag (search without writes), git status / log / diff / show / branch
+// / remote / config --get / ls-files. These should not prompt: the
+// agent uses them five times a turn for diagnostics. Risky commands
+// (rm, mv, cp, curl, wget, npm, pip, gem, brew, chmod, chown, kill,
+// pkill, mkdir, rmdir, touch, sudo, ssh, scp, eval, exec, source) and
+// any command with shell operators (>, >>, |, &&, ||, ;, backticks,
+// $()) fall through to the dialog. Matches the CLI's own built-in
+// safe-bash behaviour from the days before our PreToolUse hook
+// intercepted every Bash call.
+const BASH_SAFE_COMMANDS = new Set<string>([
+  // Identity / system info
+  "date", "echo", "pwd", "whoami", "hostname", "uname",
+  "which", "type", "command", "where",
+  "env", "printenv", "locale", "id", "groups",
+  // File reading
+  "cat", "head", "tail", "less", "more",
+  "wc", "file", "stat", "du", "df",
+  "basename", "dirname", "realpath", "readlink",
+  // Listing
+  "ls", "tree", "find",
+  // Search (read-only)
+  "grep", "egrep", "fgrep", "rg", "ag",
+  // Process info (read-only)
+  "ps", "pgrep", "jobs", "uptime",
+  // Misc read-only
+  "true", "false", "test",
+]);
+
+// Git subcommands that are read-only. `git push`, `git commit`,
+// `git checkout`, `git reset`, etc. are NOT here and will dialog.
+const GIT_SAFE_SUBCOMMANDS = new Set<string>([
+  "status", "log", "diff", "show", "branch", "remote",
+  "ls-files", "ls-tree", "rev-parse", "blame", "describe",
+  "tag", "stash", "shortlog", "reflog",
+]);
+
+function isSafeBashCommand(command: string): boolean {
+  if (!command || typeof command !== "string") return false;
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  // Reject anything with shell operators that could chain, redirect,
+  // or expand to an unsafe call. Conservative: a pipe to `wc` is safe
+  // in practice but flagging chains keeps the surface tight for v0.6.1.
+  // The PreToolUse-hook gate is the user's last line of defence — when
+  // in doubt, dialog.
+  if (/[><|;&`$()]/.test(trimmed)) return false;
+  // No leading sudo, even when followed by a "safe" command.
+  if (/^sudo\b/.test(trimmed)) return false;
+  // First whitespace-separated token = the command name.
+  const head = trimmed.split(/\s+/)[0];
+  if (head === "git") {
+    const sub = trimmed.split(/\s+/)[1];
+    if (!sub) return false;
+    // `git config --get foo` is safe, but `git config foo bar` writes.
+    if (sub === "config") return /\s--(get|list|get-all|get-regexp)\b/.test(trimmed);
+    return GIT_SAFE_SUBCOMMANDS.has(sub);
+  }
+  // `find` with -delete or -exec is not safe.
+  if (head === "find" && /\s-(delete|exec|execdir|ok|okdir)\b/.test(trimmed)) return false;
+  return BASH_SAFE_COMMANDS.has(head);
+}
+
 export class ClaudeForObsidianView extends ItemView {
   private outputEl!: HTMLDivElement;
   private inputEl!: HTMLTextAreaElement;
@@ -1413,7 +1478,17 @@ export class ClaudeForObsidianView extends ItemView {
 
     const isWrite = toolName === "Edit" || toolName === "Write" || toolName === "NotebookEdit";
     if (isWrite) return mode !== "acceptEdits";
-    if (toolName === "Bash") return true;
+    if (toolName === "Bash") {
+      // Match the CLI's own behaviour: safe read-only shell commands
+      // (date, echo, ls, pwd, cat, git status, etc.) auto-allow. The
+      // PreToolUse hook intercepts every Bash call before the CLI's
+      // built-in whitelist can vote, so without this we'd dialog even
+      // `date '+%H:%M:%S'`. Risky commands (rm, curl, npm install,
+      // sudo, anything with shell operators or chains) still ask.
+      const cmd = typeof input?.command === "string" ? input.command : "";
+      if (isSafeBashCommand(cmd)) return false;
+      return true;
+    }
     if (toolName === "WebFetch" || toolName === "WebSearch") return mode === "default";
     if (toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
       const p =
