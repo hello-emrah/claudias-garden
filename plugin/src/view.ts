@@ -117,6 +117,49 @@ function contextWindowForModel(modelId: string | null | undefined): number {
   return 200_000;
 }
 
+// Walk a session jsonl looking for the first user-prompt text. Handles
+// both shapes: legacy `message.content: string` (typical CFOB-sent
+// prompts) and modern `message.content: [{type: "text", text: "..."}, ...]`
+// blocks (VS Code, and the newer CLI session format). Returns null
+// when no user text exists in the first 50 lines — that's the prune
+// signal for "truly empty" chats.
+function extractFirstUserText(filePath: string): string | null {
+  let lines: string[];
+  try {
+    lines = fs.readFileSync(filePath, "utf8").split("\n").slice(0, 50);
+  } catch {
+    return null;
+  }
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let evt: any;
+    try {
+      evt = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (evt.type !== "user") continue;
+    const content = evt.message?.content;
+    if (typeof content === "string") {
+      const trimmed = content.trim();
+      if (trimmed) return trimmed;
+      continue;
+    }
+    if (Array.isArray(content)) {
+      // Skip tool_result-only payloads (the model is replying to a
+      // tool call, not the user prompting). Real user prompts carry
+      // at least one text block.
+      for (const block of content) {
+        if (block?.type === "text" && typeof block.text === "string") {
+          const trimmed = block.text.trim();
+          if (trimmed) return trimmed;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 // Read-only shell commands the agent runs constantly for orientation
 // — date, echo, ls, pwd, cat, head, tail, wc, find, file, which,
 // whoami, hostname, uname, ps, stat, du, df, env, locale, grep / rg /
@@ -482,7 +525,6 @@ export class ClaudeForObsidianView extends ItemView {
   private batteryEl!: HTMLButtonElement;
   private modelBtn!: HTMLButtonElement;
   private editsBtn!: HTMLButtonElement;
-  private micBtn!: HTMLButtonElement;
   private chatTitleEl!: HTMLButtonElement;
   private sendStopBtn!: HTMLButtonElement;
   // One subprocess per chat (v0.6.0). Stays alive across multiple
@@ -564,10 +606,6 @@ export class ClaudeForObsidianView extends ItemView {
     setIcon(transcriptBtn, "list");
     transcriptBtn.title = "Transcript view mode (coming soon)";
     transcriptBtn.disabled = true;
-    const newBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
-    setIcon(newBtn, "plus");
-    newBtn.title = "New chat";
-    newBtn.onclick = () => this.newChat();
     const saveBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
     setIcon(saveBtn, "download");
     saveBtn.title = "Save chat to vault";
@@ -578,6 +616,8 @@ export class ClaudeForObsidianView extends ItemView {
     this.activeSessionId = this.plugin.settings.activeSessionId ?? null;
     if (this.activeSessionId) {
       this.replaySession(this.activeSessionId);
+    } else {
+      this.renderSplash();
     }
     this.refreshChatTitle();
 
@@ -609,16 +649,6 @@ export class ClaudeForObsidianView extends ItemView {
     setIcon(plusBtn, "plus");
     plusBtn.title = "Add (coming soon)";
     plusBtn.onclick = () => this.togglePlusMenu(plusBtn);
-
-    this.micBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
-    setIcon(this.micBtn, "mic");
-    this.micBtn.title = "Voice input (not available)";
-    this.micBtn.onclick = () =>
-      this.toggleInfoPopup(
-        this.micBtn,
-        "Voice input",
-        "Web Speech API isn't wired in Obsidian's Electron build (Chromium routes recognition through Google's service, which requires an API key the embedder doesn't ship). Use macOS dictation (Edit → Start Dictation, or the fn fn shortcut) on the input area as the current workaround.",
-      );
 
     footerNav.createDiv({ cls: "cfo-footer-spacer" });
 
@@ -716,22 +746,17 @@ export class ClaudeForObsidianView extends ItemView {
       this.setTitleText(custom);
       return;
     }
-    // Look up first user message from the jsonl on demand.
+    // Look up first user message from the jsonl on demand. Handles both
+    // string-content (typical for CFOB-sent prompts) and array-content
+    // (VS Code, plus newer CLI formats) — without the array path the
+    // title would fall through to "(untitled)" for VS Code chats.
     const filePath = this.findSessionFile(id);
     if (filePath) {
-      try {
-        const lines = fs.readFileSync(filePath, "utf8").split("\n").slice(0, 50);
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const evt = JSON.parse(line);
-            if (evt.type === "user" && typeof evt.message?.content === "string") {
-              this.setTitleText(evt.message.content);
-              return;
-            }
-          } catch {}
-        }
-      } catch {}
+      const extracted = extractFirstUserText(filePath);
+      if (extracted) {
+        this.setTitleText(extracted);
+        return;
+      }
     }
     // Fall back to pendingTitle (captured at send time) if jsonl hasn't
     // flushed the user message yet.
@@ -766,35 +791,21 @@ export class ClaudeForObsidianView extends ItemView {
     for (const file of files) {
       const fullPath = path.join(dirPath, file);
       const id = file.replace(/\.jsonl$/, "");
-      let label = "(empty)";
       let stat: fs.Stats;
       try {
         stat = fs.statSync(fullPath);
       } catch {
         continue;
       }
-      try {
-        const head = fs.readFileSync(fullPath, "utf8").split("\n").slice(0, 50);
-        for (const line of head) {
-          if (!line.trim()) continue;
-          try {
-            const evt = JSON.parse(line);
-            if (evt.type === "user" && typeof evt.message?.content === "string") {
-              label = evt.message.content;
-              break;
-            }
-            if (evt.type === "queue-operation" && typeof evt.content === "string") {
-              label = evt.content;
-              break;
-            }
-          } catch {
-            // skip malformed line
-          }
-        }
-      } catch {
-        // unreadable file; skip
-      }
-      const truncated = label.length > 40 ? label.slice(0, 40) + "…" : label;
+      const label = extractFirstUserText(fullPath);
+      // Prune rule: a session with no user-prompt text content is empty.
+      // Drop it from the list. Survives a custom rename (cached out of
+      // band in settings.sessionLabels) — if the user has named the
+      // chat, we honour that label even when extraction comes up dry.
+      const custom = this.plugin.settings.sessionLabels[id];
+      if (!label && !custom) continue;
+      const finalLabel = custom || label!;
+      const truncated = finalLabel.length > 40 ? finalLabel.slice(0, 40) + "…" : finalLabel;
       summaries.push({ id, label: truncated, timestamp: stat.mtimeMs });
     }
     summaries.sort((a, b) => b.timestamp - a.timestamp);
@@ -827,6 +838,18 @@ export class ClaudeForObsidianView extends ItemView {
     const rect = target.getBoundingClientRect();
     popup.style.top = `${rect.bottom + 4}px`;
     popup.style.left = `${rect.left}px`;
+
+    // New chat row at the very top — replaces the retired top-header
+    // `+` button. Click closes the popup and starts a fresh chat.
+    const newChatRow = popup.createDiv({ cls: "cfo-history-new" });
+    const newChatIcon = newChatRow.createSpan({ cls: "cfo-history-new-icon" });
+    setIcon(newChatIcon, "plus");
+    newChatRow.createSpan({ cls: "cfo-history-new-label", text: "New chat" });
+    newChatRow.onclick = () => {
+      this.chatTitleEl.removeClass("cfo-btn-active");
+      popup.remove();
+      this.newChat();
+    };
 
     // Search input.
     const searchWrap = popup.createDiv({ cls: "cfo-history-search" });
@@ -1022,6 +1045,7 @@ export class ClaudeForObsidianView extends ItemView {
   private replaySession(id: string): void {
     const filePath = this.findSessionFile(id);
     if (!filePath) return;
+    this.clearSplash();
     let raw: string;
     try {
       raw = fs.readFileSync(filePath, "utf8");
@@ -1208,6 +1232,23 @@ export class ClaudeForObsidianView extends ItemView {
     this.renderBattery();
     this.refreshChatTitle();
     this.clearStatus();
+    this.renderSplash();
+  }
+
+  /** Splash content shown when no chat is active — replaces the
+   *  default behaviour of opening with an empty `(empty)` chat that
+   *  pollutes the session list. Hidden the moment any real content
+   *  appends to outputEl (user message, tool use, or replay). */
+  private renderSplash(): void {
+    this.clearSplash();
+    const splash = this.outputEl.createDiv({ cls: "cfo-splash" });
+    splash.createDiv({ cls: "cfo-splash-greeting", text: "Welcome back." });
+    splash.createDiv({ cls: "cfo-splash-prompt", text: "What are we writing today?" });
+  }
+
+  private clearSplash(): void {
+    const existing = this.outputEl.querySelector(".cfo-splash");
+    if (existing) existing.remove();
   }
 
   deleteCurrentChat(): void {
@@ -1311,6 +1352,7 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   private appendUserBlock(text: string, when: Date = new Date()): void {
+    this.clearSplash();
     this.closeClaudeTurn();
     this.maybeAppendDateDivider(when);
     const block = this.outputEl.createDiv({ cls: "cfo-message cfo-message-user" });
@@ -1330,6 +1372,7 @@ export class ClaudeForObsidianView extends ItemView {
    */
   private ensureClaudeTurn(when: Date = new Date()): HTMLElement {
     if (this.currentClaudeTurn) return this.currentClaudeTurn;
+    this.clearSplash();
     this.maybeAppendDateDivider(when);
     const wrapper = this.outputEl.createDiv({ cls: "cfo-turn-claude" });
     const role = wrapper.createDiv({ cls: "cfo-turn-claude-role" });

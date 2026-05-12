@@ -72,6 +72,33 @@
   background: var(--background-modifier-border-hover);
 }
 
+/* Splash content shown when no chat is active. Replaces the
+   auto-created `(empty)` ghost chats that used to accrue every time
+   Obsidian re-opened. Greeting and prompt centred in the output area,
+   faint so the textarea below stays the obvious focus. */
+.cfo-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 60%;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.cfo-splash-greeting {
+  font-size: var(--font-ui-large);
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.cfo-splash-prompt {
+  font-size: var(--font-ui-medium);
+  color: var(--text-muted);
+}
+
 .cfo-header-row {
   display: flex;
   align-items: center;
@@ -1590,6 +1617,37 @@
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   overflow: hidden;
+}
+
+/* New-chat row at the top of the history dropdown. Replaces the
+   retired top-header `+` button. Click closes the popup and starts
+   a fresh chat. Visual register matches a session row but with the
+   plus icon up front and no time / action affordances. */
+.cfo-history-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: 500;
+}
+
+.cfo-history-new:hover {
+  background: var(--background-modifier-hover);
+}
+
+.cfo-history-new-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.cfo-history-new-icon .svg-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .cfo-history-search {
