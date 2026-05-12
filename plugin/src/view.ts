@@ -2,7 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, TFile, Mo
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { ClaudeSession, StreamEvent, PermissionDecision } from "./claude-client";
+import { ClaudeSession, StreamEvent, PermissionDecision, ContextUsageResponse } from "./claude-client";
 import { lineDiff, renderDiff } from "./diff";
 import { exportSession } from "./chat-export";
 import { WikilinkSuggest } from "./wikilink-suggest";
@@ -623,7 +623,7 @@ export class ClaudeForObsidianView extends ItemView {
     footerNav.createDiv({ cls: "cfo-footer-spacer" });
 
     this.batteryEl = footerNav.createEl("button", { cls: "cfo-battery" });
-    this.batteryEl.onclick = () => this.togglePlanUsagePopup();
+    this.batteryEl.onclick = () => this.toggleContextPopup();
     this.renderBattery();
 
     this.modelBtn = footerNav.createEl("button", { cls: "cfo-model-btn" });
@@ -2386,7 +2386,7 @@ export class ClaudeForObsidianView extends ItemView {
     else if (tone === "warning") this.batteryEl.addClass("cfo-battery-warning");
     else if (tone === "urgent") this.batteryEl.addClass("cfo-battery-urgent");
 
-    this.batteryEl.title = `${remainingPct}% context remaining. Click for plan usage.`;
+    this.batteryEl.title = `${remainingPct}% context remaining. Click for details.`;
 
     const ns = "http://www.w3.org/2000/svg";
     const svg = this.batteryEl.createSvg("svg", {
@@ -2672,12 +2672,141 @@ export class ClaudeForObsidianView extends ItemView {
     }, 0);
   }
 
-  private togglePlanUsagePopup(): void {
-    this.toggleInfoPopup(
-      this.batteryEl,
-      "Plan usage",
-      "Coming soon. The CLI doesn't expose plan usage yet.",
-    );
+  /** Context-window popup anchored above the battery ring. Shows
+   *  exact tokens used / tokens max / percentage plus a "X remaining"
+   *  headline. Data comes from the CLI's `get_context_usage` control
+   *  request — authoritative, not the heuristic accumulator that
+   *  drives the ring between turns. Falls back to a static cold-open
+   *  shape when no session is live. */
+  private toggleContextPopup(): void {
+    const existing = this.containerEl.ownerDocument.querySelector(
+      ".cfo-plan-popup",
+    ) as HTMLElement | null;
+    if (existing) {
+      const prev = (existing as any).cfoTriggerEl as HTMLElement | undefined;
+      if (prev) prev.removeClass("cfo-btn-active");
+      existing.remove();
+      return;
+    }
+    this.openContextPopup();
+  }
+
+  private openContextPopup(): void {
+    const doc = this.containerEl.ownerDocument;
+    const win = doc.defaultView!;
+    doc.querySelectorAll(".cfo-plan-popup").forEach((el) => el.remove());
+    const popup = doc.body.createDiv({ cls: "cfo-plan-popup cfo-context-popup" });
+    (popup as any).cfoTriggerEl = this.batteryEl;
+
+    const rect = this.batteryEl.getBoundingClientRect();
+    popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
+    popup.style.left = "0px";
+
+    popup.createDiv({ cls: "cfo-plan-popup-title", text: "Context window" });
+    const body = popup.createDiv({ cls: "cfo-context-body" });
+
+    // Render whatever we know right now — either a live snapshot if
+    // the session can answer, or the heuristic shape from the ring's
+    // own state if we're cold.
+    this.paintContextBody(body, "initial");
+
+    // Clamp position to viewport now that the popup has its real width.
+    const margin = 8;
+    const maxLeft = win.innerWidth - popup.offsetWidth - margin;
+    const clamped = Math.max(margin, Math.min(rect.left, maxLeft));
+    popup.style.left = `${clamped}px`;
+
+    this.batteryEl.addClass("cfo-btn-active");
+
+    const dismiss = (e: MouseEvent) => {
+      if (popup.contains(e.target as Node)) return;
+      if (this.batteryEl.contains(e.target as Node)) return;
+      this.batteryEl.removeClass("cfo-btn-active");
+      popup.remove();
+      doc.removeEventListener("mousedown", dismiss, true);
+    };
+    setTimeout(() => doc.addEventListener("mousedown", dismiss, true), 0);
+
+    // Fire the authoritative snapshot request if the session is live.
+    // While the request is in flight the heuristic shape is on screen,
+    // so the popup never looks empty.
+    if (this.currentSession?.isAlive) {
+      this.currentSession
+        .getContextUsage()
+        .then((snapshot) => {
+          if (!popup.isConnected) return;
+          this.paintContextBody(body, "live", snapshot);
+        })
+        .catch(() => {
+          // Session died mid-flight or the CLI rejected — leave the
+          // heuristic shape on screen rather than blanking the popup.
+        });
+    }
+  }
+
+  /** Paint the body of the context-window popup. Two shapes:
+   *
+   *  - `initial` — use the heuristic accumulator + per-model window.
+   *    Renders immediately, no async wait. Used as the first frame
+   *    and as the cold-open fallback when no session is live.
+   *  - `live`    — use the authoritative `get_context_usage` snapshot.
+   *    Replaces the initial frame once the round-trip lands.
+   */
+  private paintContextBody(
+    host: HTMLElement,
+    mode: "initial" | "live",
+    snapshot?: ContextUsageResponse,
+  ): void {
+    const max =
+      mode === "live" && snapshot
+        ? snapshot.maxTokens
+        : contextWindowForModel(this.plugin.settings.model);
+    const used =
+      mode === "live" && snapshot ? snapshot.totalTokens : this.sessionTokensUsed;
+    const remaining = Math.max(0, max - used);
+    const pct =
+      mode === "live" && snapshot
+        ? snapshot.percentage
+        : Math.max(0, Math.min(100, Math.round((used / max) * 100)));
+
+    host.empty();
+    host.createDiv({
+      cls: "cfo-context-headline",
+      text: `${this.formatTokens(remaining)} remaining`,
+    });
+    host.createDiv({
+      cls: "cfo-context-subline",
+      text: `${this.formatTokens(used)} / ${this.formatTokens(max)} used · ${pct}%`,
+    });
+    const bar = host.createDiv({ cls: "cfo-context-bar" });
+    const fill = bar.createDiv({ cls: "cfo-context-bar-fill" });
+    fill.style.width = `${pct}%`;
+    if (mode === "initial" && !this.currentSession?.isAlive) {
+      host.createDiv({
+        cls: "cfo-context-note",
+        text: "Estimated from this chat's traffic. Send a message to load the live snapshot.",
+      });
+    }
+  }
+
+  /** Refresh the context popup body in place if it's open. Called
+   *  from the `result` event handler so the numbers update across
+   *  turns without re-clicking the battery. */
+  private refreshContextPopupIfOpen(): void {
+    const popup = this.containerEl.ownerDocument.querySelector(
+      ".cfo-context-popup",
+    ) as HTMLElement | null;
+    if (!popup) return;
+    const body = popup.querySelector(".cfo-context-body") as HTMLElement | null;
+    if (!body) return;
+    if (!this.currentSession?.isAlive) return;
+    this.currentSession
+      .getContextUsage()
+      .then((snapshot) => {
+        if (!popup.isConnected) return;
+        this.paintContextBody(body, "live", snapshot);
+      })
+      .catch(() => {});
   }
 
   /**
@@ -2799,6 +2928,7 @@ export class ClaudeForObsidianView extends ItemView {
           this.sessionTokensUsed = Math.max(this.sessionTokensUsed, turnTokens);
           this.renderBattery();
         }
+        this.refreshContextPopupIfOpen();
         // Turn landed. UNLIKE the per-turn architecture (≤ v0.5.1) the
         // subprocess stays alive for the next user message in this chat.
         // Just flip UI state — the session is now idle, ready for the

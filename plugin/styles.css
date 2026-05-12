@@ -1492,6 +1492,53 @@
   line-height: 1.4;
 }
 
+/* Context-window popup body — replaces the old "Plan usage — Coming
+   soon" placeholder. Headline carries the remaining-tokens count
+   prominently; sub-line carries the used / max / percentage native
+   detail; bar gives a visual fill that drains as the conversation
+   grows. */
+.cfo-context-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cfo-context-headline {
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+  font-variant-numeric: tabular-nums;
+}
+
+.cfo-context-subline {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.cfo-context-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--background-modifier-border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.cfo-context-bar-fill {
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 2px;
+  transition: width 0.2s ease-out;
+}
+
+.cfo-context-note {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-style: italic;
+  margin-top: 4px;
+}
+
 .cfo-status-thinking {
   display: flex;
   align-items: center;

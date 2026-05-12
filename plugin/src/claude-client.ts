@@ -34,6 +34,21 @@ export type PermissionDecision =
   | { behavior: "allow"; updatedInput: Record<string, unknown> }
   | { behavior: "deny"; message?: string };
 
+/** Structured response to the `get_context_usage` control_request.
+ *  Sourced directly from the CLI's authoritative snapshot — `totalTokens`
+ *  is the exact tokens-in-context after the most recent turn, and
+ *  `maxTokens` is the per-model window (200k or 1M depending on the
+ *  `[1m]` alias). The categories array breaks the usage down by system
+ *  prompt, tools, memory, skills, messages, autocompact buffer, and
+ *  free space — useful if we ever want to surface a drill-down. */
+export interface ContextUsageResponse {
+  categories: Array<{ name: string; tokens: number; color?: string }>;
+  totalTokens: number;
+  maxTokens: number;
+  percentage: number;
+  autocompactSource?: string;
+}
+
 const HOOK_CALLBACK_ID = "cfob-pretooluse";
 
 export interface SessionOptions {
@@ -67,6 +82,10 @@ export class ClaudeSession {
   private initSent = false;
   private alive = false;
   private stdoutBuffer = "";
+  private pendingControlResponses = new Map<
+    string,
+    { resolve: (response: any) => void; reject: (err: Error) => void }
+  >();
 
   constructor(private opts: SessionOptions) {}
 
@@ -164,6 +183,26 @@ export class ClaudeSession {
     });
   }
 
+  /** Ask the CLI for its current context-window usage snapshot. The
+   *  CLI replies with a `control_response` carrying the totalTokens,
+   *  maxTokens, percentage, and per-category breakdown. Used by the
+   *  context-window popup; the ring battery between turns stays on
+   *  the cheap per-turn `tokensFromUsage` accumulator. */
+  getContextUsage(): Promise<ContextUsageResponse> {
+    if (!this.alive) {
+      return Promise.reject(new Error("Session not alive"));
+    }
+    const requestId = this.makeRequestId();
+    return new Promise<ContextUsageResponse>((resolve, reject) => {
+      this.pendingControlResponses.set(requestId, { resolve, reject });
+      this.writeStdin({
+        type: "control_request",
+        request_id: requestId,
+        request: { subtype: "get_context_usage" },
+      });
+    });
+  }
+
   // ---------- internals ----------
 
   private spawnChild(): void {
@@ -235,6 +274,12 @@ export class ClaudeSession {
     child.on("close", (code) => {
       if (this.stdoutBuffer.trim()) this.dispatchLine(this.stdoutBuffer.trim());
       this.alive = false;
+      // Reject any in-flight control_request promises so awaiters
+      // unblock instead of hanging on a dead pipe.
+      for (const { reject } of this.pendingControlResponses.values()) {
+        reject(new Error("Session closed before response"));
+      }
+      this.pendingControlResponses.clear();
       this.opts.onEvent({ kind: "exit", code });
     });
   }
@@ -315,6 +360,31 @@ export class ClaudeSession {
             content,
             isError: !!block.is_error,
           });
+        }
+      }
+      return;
+    }
+    if (type === "control_response") {
+      // Settle a control_request we sent (get_context_usage today;
+      // more will land as we wire more SDK control surfaces). The CLI
+      // wraps the response under `response.response`.
+      const requestId =
+        typeof evt.response?.request_id === "string" ? evt.response.request_id : null;
+      if (requestId) {
+        const pending = this.pendingControlResponses.get(requestId);
+        if (pending) {
+          this.pendingControlResponses.delete(requestId);
+          if (evt.response.subtype === "success") {
+            pending.resolve(evt.response.response);
+          } else {
+            pending.reject(
+              new Error(
+                typeof evt.response.error === "string"
+                  ? evt.response.error
+                  : "control_request failed",
+              ),
+            );
+          }
         }
       }
       return;
