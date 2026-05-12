@@ -532,6 +532,87 @@
   background: rgba(255, 255, 255, 0.18);
 }
 
+/* Allow-always footer button — neutral chrome between Deny and the
+   primary Allow-once. Opens a small inline popup with three rule
+   scopes (this / some / all) when clicked. */
+.cfo-permission-btn-always {
+  color: var(--text-normal);
+}
+
+.cfo-permission-btn-active {
+  background: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+/* Popup spawned by the Allow-always button. Lives in document.body so
+   it floats above the chat panel without inheriting overflow:hidden.
+   Anchored from JS — bottom + left set via inline style relative to
+   the trigger's rect. */
+.cfo-allow-always-popup {
+  position: fixed;
+  z-index: 100;
+  min-width: 240px;
+  max-width: 380px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+  font-size: var(--font-ui-small);
+}
+
+.cfo-allow-always-popup-label {
+  padding: 6px 10px 4px 10px;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cfo-allow-always-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  position: relative;
+}
+
+.cfo-allow-always-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.cfo-allow-always-rule {
+  font-family: var(--font-monospace);
+  color: var(--text-normal);
+  /* Long Bash commands or full paths get ellipsized — the full rule
+     is still in the title tooltip via the host's CSS title=* if
+     needed. For now we trust the relativizer + word-break for
+     readability without the ellipsis. */
+  word-break: break-all;
+  font-size: 0.95em;
+  line-height: 1.35;
+}
+
+.cfo-allow-always-desc {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  line-height: 1.3;
+}
+
+.cfo-allow-always-chord {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-family: var(--font-monospace);
+  font-size: 0.82em;
+  opacity: 0.65;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
 /* Bypass-permissions confirmation modal (cfob-i6-bypass-confirm, v0.6.2).
    One-time-per-vault dialog shown when the user picks Bypass permissions
    in either the bottom-nav mode picker or the Settings tab dropdown.

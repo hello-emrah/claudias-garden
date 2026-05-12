@@ -235,30 +235,244 @@ export class BypassConfirmModal extends Modal {
   }
 }
 
+/**
+ * Bash safety override — returns true if the command must always
+ * dialog regardless of any user allow-rule. Mirrors the native CLI's
+ * `bashMissKind` taxonomy (shell-operators, cd-compounds, find
+ * dangerous flags, leading sudo). User allow-rules should never be
+ * able to auto-allow these patterns; pre-approving `Bash(git *)`
+ * shouldn't bypass safety for `cd /tmp && git status`.
+ */
+function hasBashSafetyOverride(command: string): boolean {
+  if (!command || typeof command !== "string") return false;
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  // Shell operators — chains, redirects, subshells, command groups.
+  if (/[><|;&`$()]/.test(trimmed)) return true;
+  // Leading sudo.
+  if (/^sudo\b/.test(trimmed)) return true;
+  // find with delete/exec/exec-dir/ok/ok-dir — can execute arbitrary
+  // commands or destroy files outside the safe read pattern.
+  if (/^find\b/.test(trimmed) && /\s-(delete|exec|execdir|ok|okdir)\b/.test(trimmed)) return true;
+  return false;
+}
+
+/**
+ * Whitelist check — true if the command's head token is in the
+ * known-safe set (or a read-only git subcommand). Assumes the caller
+ * already ran the safety-override check first; this function does NOT
+ * re-check operators / sudo / find dangerous flags.
+ */
 function isSafeBashCommand(command: string): boolean {
   if (!command || typeof command !== "string") return false;
   const trimmed = command.trim();
   if (!trimmed) return false;
-  // Reject anything with shell operators that could chain, redirect,
-  // or expand to an unsafe call. Conservative: a pipe to `wc` is safe
-  // in practice but flagging chains keeps the surface tight for v0.6.1.
-  // The PreToolUse-hook gate is the user's last line of defence — when
-  // in doubt, dialog.
-  if (/[><|;&`$()]/.test(trimmed)) return false;
-  // No leading sudo, even when followed by a "safe" command.
-  if (/^sudo\b/.test(trimmed)) return false;
-  // First whitespace-separated token = the command name.
+  // Defence-in-depth: if a caller forgot the override check, still
+  // reject here. The override is the load-bearing gate.
+  if (hasBashSafetyOverride(trimmed)) return false;
   const head = trimmed.split(/\s+/)[0];
   if (head === "git") {
     const sub = trimmed.split(/\s+/)[1];
     if (!sub) return false;
-    // `git config --get foo` is safe, but `git config foo bar` writes.
     if (sub === "config") return /\s--(get|list|get-all|get-regexp)\b/.test(trimmed);
     return GIT_SAFE_SUBCOMMANDS.has(sub);
   }
-  // `find` with -delete or -exec is not safe.
-  if (head === "find" && /\s-(delete|exec|execdir|ok|okdir)\b/.test(trimmed)) return false;
   return BASH_SAFE_COMMANDS.has(head);
+}
+
+/**
+ * One user-set rule from the permission dialog's "Allow always" menu.
+ * Lives in memory for the lifetime of a chat — cleared on chat
+ * switch / new chat / panel close. The rule format mirrors native:
+ * `pattern` is the parenthesised specifier or null for "tool-wide".
+ */
+interface AllowRule {
+  toolName: string;
+  pattern: string | null;
+  // The exact rule string as it'd appear on disk in native settings,
+  // e.g. "Bash(git *)" or "Edit". Used for display and de-duplication.
+  display: string;
+}
+
+/**
+ * Generate the three rule suggestions ("this", "some", "all") the
+ * "Allow always" menu offers for a given tool call. The rule's
+ * `pattern` carries the FULL path / command for matching; the
+ * `display` is the user-facing label that gets shortened to the
+ * vault-relative form when the path lives inside the cwd. Returns a
+ * de-duplicated list — single-word Bash commands collapse to fewer
+ * scopes naturally.
+ */
+function generateRuleSuggestions(
+  toolName: string,
+  input: any,
+  cwd?: string | null,
+): Array<{ rule: AllowRule; scope: "this" | "some" | "all" }> {
+  const suggestions: Array<{ rule: AllowRule; scope: "this" | "some" | "all" }> = [];
+  const relativize = (p: string): string => {
+    if (cwd && p.startsWith(cwd + "/")) return p.slice(cwd.length + 1);
+    if (cwd && p === cwd) return ".";
+    return p;
+  };
+  const push = (
+    pattern: string | null,
+    scope: "this" | "some" | "all",
+    displayPattern?: string,
+  ) => {
+    const realDisplayPattern = displayPattern ?? pattern;
+    const display =
+      pattern === null
+        ? toolName
+        : `${toolName}(${realDisplayPattern})`;
+    if (suggestions.some((s) => s.rule.display === display)) return;
+    suggestions.push({ rule: { toolName, pattern, display }, scope });
+  };
+
+  if (toolName === "Bash") {
+    const cmd = typeof input?.command === "string" ? input.command.trim() : "";
+    if (cmd) {
+      const head = cmd.split(/\s+/)[0];
+      push(cmd, "this");
+      if (head) push(`${head} *`, "some");
+    }
+    push(null, "all");
+    return suggestions;
+  }
+
+  if (toolName === "Edit" || toolName === "Write" || toolName === "NotebookEdit") {
+    const filePath =
+      typeof input?.file_path === "string"
+        ? input.file_path
+        : typeof input?.notebook_path === "string"
+          ? input.notebook_path
+          : "";
+    if (filePath) {
+      push(filePath, "this", relativize(filePath));
+      const slash = filePath.lastIndexOf("/");
+      if (slash > 0) {
+        const folder = filePath.slice(0, slash);
+        const folderRel = relativize(folder);
+        push(`${folder}/**`, "some", `${folderRel === "." ? "" : folderRel + "/"}**`);
+      }
+    }
+    push(null, "all");
+    return suggestions;
+  }
+
+  if (toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
+    const p = typeof input?.file_path === "string" ? input.file_path
+      : typeof input?.path === "string" ? input.path : "";
+    if (p) {
+      push(p, "this", relativize(p));
+      const slash = p.lastIndexOf("/");
+      if (slash > 0) {
+        const folder = p.slice(0, slash);
+        const folderRel = relativize(folder);
+        push(`${folder}/**`, "some", `${folderRel === "." ? "" : folderRel + "/"}**`);
+      }
+    }
+    push(null, "all");
+    return suggestions;
+  }
+
+  if (toolName === "WebFetch") {
+    const url = typeof input?.url === "string" ? input.url : "";
+    if (url) {
+      push(url, "this");
+      try {
+        const u = new URL(url);
+        push(`${u.protocol}//${u.host}/*`, "some");
+      } catch {
+        // not a parseable URL — skip the host scope
+      }
+    }
+    push(null, "all");
+    return suggestions;
+  }
+
+  // Default: just tool-wide.
+  push(null, "all");
+  return suggestions;
+}
+
+/** Short noun phrase describing what each scope grants, for the
+ *  popup row's secondary line. Kept tight — no path duplication. */
+function scopeDescription(scope: "this" | "some" | "all", toolName: string): string {
+  if (scope === "this") {
+    if (toolName === "Bash") return "this exact command";
+    if (toolName === "WebFetch" || toolName === "WebSearch") return "this exact URL";
+    return "this exact path";
+  }
+  if (scope === "some") {
+    if (toolName === "Bash") return "any command with this prefix";
+    if (toolName === "WebFetch") return "any URL on this host";
+    return "anything in this folder";
+  }
+  // all
+  if (toolName === "Bash") return "any shell command";
+  if (toolName === "WebFetch") return "any web fetch";
+  if (toolName === "WebSearch") return "any web search";
+  return `any ${toolName.toLowerCase()}`;
+}
+
+/**
+ * Match a tool call against the session's user-set rules. Returns
+ * true if any rule matches the call's input. Caller is responsible
+ * for running the safety-override check FIRST — this function does
+ * not consult safety overrides.
+ */
+function matchesAllowRule(toolName: string, input: any, rules: AllowRule[]): boolean {
+  for (const rule of rules) {
+    if (rule.toolName !== toolName) continue;
+    if (rule.pattern === null) return true; // tool-wide
+    if (toolName === "Bash") {
+      const cmd = typeof input?.command === "string" ? input.command.trim() : "";
+      if (!cmd) continue;
+      // Bash patterns: exact, or "<prefix> *" prefix-wildcard.
+      if (rule.pattern.endsWith(" *")) {
+        const prefix = rule.pattern.slice(0, -2);
+        if (cmd === prefix || cmd.startsWith(prefix + " ")) return true;
+      } else if (cmd === rule.pattern) {
+        return true;
+      }
+      continue;
+    }
+    // Path-based tools — Edit / Write / NotebookEdit / Read / Glob / Grep.
+    if (
+      toolName === "Edit" ||
+      toolName === "Write" ||
+      toolName === "NotebookEdit" ||
+      toolName === "Read" ||
+      toolName === "Glob" ||
+      toolName === "Grep"
+    ) {
+      const p =
+        typeof input?.file_path === "string" ? input.file_path
+        : typeof input?.notebook_path === "string" ? input.notebook_path
+        : typeof input?.path === "string" ? input.path
+        : "";
+      if (!p) continue;
+      if (rule.pattern.endsWith("/**")) {
+        const prefix = rule.pattern.slice(0, -3);
+        if (p === prefix || p.startsWith(prefix + "/")) return true;
+      } else if (p === rule.pattern) {
+        return true;
+      }
+      continue;
+    }
+    if (toolName === "WebFetch") {
+      const url = typeof input?.url === "string" ? input.url : "";
+      if (!url) continue;
+      if (rule.pattern.endsWith("/*")) {
+        const prefix = rule.pattern.slice(0, -2);
+        if (url.startsWith(prefix + "/") || url === prefix) return true;
+      } else if (url === rule.pattern) {
+        return true;
+      }
+      continue;
+    }
+  }
+  return false;
 }
 
 export class ClaudeForObsidianView extends ItemView {
@@ -307,6 +521,10 @@ export class ClaudeForObsidianView extends ItemView {
   }> = [];
   private activePermissionRequest: typeof this.permissionQueue[number] | null = null;
   private permissionKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  // Session-scoped user allow-rules accumulated via the dialog's
+  // "Allow always" menu. Cleared on chat switch / new chat / panel
+  // close. Matches the native CLI's per-session rule storage.
+  private allowRules: AllowRule[] = [];
   // Per-turn wrapper for everything Claude emits in a single agent turn:
   // narration prose, tool groups, final prose. The CLAUDE header sits
   // once at the top of this wrapper. Reset to null when a user message
@@ -1555,15 +1773,28 @@ export class ClaudeForObsidianView extends ItemView {
     const mode = this.plugin.settings.permissionMode;
     if (mode === "bypassPermissions") return false;
 
+    // Safety overrides — these vote FIRST, even before user
+    // allow-rules. Pre-approving `Bash(git *)` doesn't auto-allow
+    // `cd /tmp && git status` because the cd-compound + chain can
+    // execute hooks from untrusted dirs. Mirrors native's
+    // `bashMissKind` taxonomy.
+    if (toolName === "Bash") {
+      const cmd = typeof input?.command === "string" ? input.command : "";
+      if (hasBashSafetyOverride(cmd)) return true;
+    }
+
+    // User-set session allow-rules. Match against the call; if any
+    // rule covers it, auto-allow. Only consulted after safety has
+    // voted, so `Bash` tool-wide rules can't bypass shell-operator
+    // checks.
+    if (matchesAllowRule(toolName, input, this.allowRules)) return false;
+
     const isWrite = toolName === "Edit" || toolName === "Write" || toolName === "NotebookEdit";
     if (isWrite) return mode !== "acceptEdits";
     if (toolName === "Bash") {
-      // Match the CLI's own behaviour: safe read-only shell commands
-      // (date, echo, ls, pwd, cat, git status, etc.) auto-allow. The
-      // PreToolUse hook intercepts every Bash call before the CLI's
-      // built-in whitelist can vote, so without this we'd dialog even
-      // `date '+%H:%M:%S'`. Risky commands (rm, curl, npm install,
-      // sudo, anything with shell operators or chains) still ask.
+      // Safe read-only Bash commands auto-allow (date, echo, ls,
+      // pwd, cat, git status, etc.). Matches the CLI's own
+      // pre-hook behaviour. Risky commands still ask.
       const cmd = typeof input?.command === "string" ? input.command : "";
       if (isSafeBashCommand(cmd)) return false;
       return true;
@@ -1644,6 +1875,19 @@ export class ClaudeForObsidianView extends ItemView {
 
     const spacer = footer.createDiv({ cls: "cfo-permission-spacer" });
     void spacer;
+
+    // "Allow always" — opens a small inline popup with three scope
+    // options (this exact, prefix-pattern, tool-wide). Each option
+    // click adds a session-scoped rule AND allows the call.
+    const alwaysBtn = footer.createEl("button", {
+      cls: "cfo-permission-btn cfo-permission-btn-always",
+    });
+    alwaysBtn.createSpan({ text: "Allow always" });
+    alwaysBtn.createSpan({ cls: "cfo-permission-chord", text: "▾" });
+    alwaysBtn.onclick = (e) => {
+      e.stopPropagation();
+      this.toggleAllowAlwaysPopup(alwaysBtn, req);
+    };
 
     const allowBtn = footer.createEl("button", { cls: "cfo-permission-btn cfo-permission-btn-allow" });
     allowBtn.createSpan({ text: "Allow once" });
@@ -1786,9 +2030,100 @@ export class ClaudeForObsidianView extends ItemView {
       this.currentSession.respondPermission(active.requestId, decision);
     }
     this.unbindPermissionKeys();
+    this.dismissAllowAlwaysPopup();
     this.clearStatus();
     // Show next queued, or hide.
     this.showNextPermissionRequest();
+  }
+
+  /** Open / close the "Allow always for ..." scope-picker popup
+   *  anchored on the dialog's Allow-always button. Click a row to
+   *  add the rule to the session and allow the call. */
+  private toggleAllowAlwaysPopup(
+    triggerEl: HTMLElement,
+    req: { toolName: string; input: any },
+  ): void {
+    // If a popup is already open, close it cleanly (proper listener
+    // unregistration) rather than just removing the DOM node — the
+    // previous implementation leaked a window-mousedown listener every
+    // time the trigger was clicked to toggle off, which then prematurely
+    // killed subsequent popups before their row clicks could fire.
+    if (this.containerEl.ownerDocument.querySelector(".cfo-allow-always-popup")) {
+      this.dismissAllowAlwaysPopup();
+      return;
+    }
+    const doc = this.containerEl.ownerDocument;
+    const win = doc.defaultView!;
+    const popup = doc.body.createDiv({ cls: "cfo-allow-always-popup" });
+    const rect = triggerEl.getBoundingClientRect();
+    popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
+    popup.style.left = `${Math.max(8, rect.left)}px`;
+    triggerEl.addClass("cfo-permission-btn-active");
+
+    popup.createDiv({
+      cls: "cfo-allow-always-popup-label",
+      text: "Allow always for…",
+    });
+
+    const cwd = this.resolveCwd();
+    const suggestions = generateRuleSuggestions(req.toolName, req.input, cwd);
+    for (const s of suggestions) {
+      const row = popup.createDiv({ cls: "cfo-allow-always-row" });
+      const ruleCol = row.createDiv({ cls: "cfo-allow-always-rule" });
+      ruleCol.setText(s.rule.display);
+      const descCol = row.createDiv({ cls: "cfo-allow-always-desc" });
+      descCol.setText(scopeDescription(s.scope, req.toolName));
+      if (s.scope === "all") {
+        row.createSpan({ cls: "cfo-allow-always-chord", text: "⌘⇧⏎" });
+      }
+      // mousedown rather than click — fires before the window-level
+      // dismiss listener so the row's action always wins even if a
+      // stale dismiss handler somehow survives. Also: synchronous.
+      row.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.acceptAllowAlways(s.rule);
+      });
+    }
+
+    // Clamp left so the popup doesn't run off the right edge.
+    const margin = 8;
+    const maxLeft = win.innerWidth - popup.offsetWidth - margin;
+    if (popup.offsetLeft > maxLeft) {
+      popup.style.left = `${Math.max(margin, maxLeft)}px`;
+    }
+
+    const dismiss = (e: MouseEvent) => {
+      if (popup.contains(e.target as Node)) return;
+      if (triggerEl.contains(e.target as Node)) return;
+      this.dismissAllowAlwaysPopup();
+    };
+    win.addEventListener("mousedown", dismiss);
+    (popup as any).cfoDismiss = dismiss;
+  }
+
+  private dismissAllowAlwaysPopup(): void {
+    const doc = this.containerEl.ownerDocument;
+    const popup = doc.querySelector(".cfo-allow-always-popup");
+    if (popup) {
+      const dismiss = (popup as any).cfoDismiss as ((e: MouseEvent) => void) | undefined;
+      if (dismiss) doc.defaultView?.removeEventListener("mousedown", dismiss);
+      popup.remove();
+    }
+    doc.querySelectorAll(".cfo-permission-btn-always").forEach((b) =>
+      b.classList.remove("cfo-permission-btn-active"),
+    );
+  }
+
+  /** Add a session-scoped allow-rule and settle the active request
+   *  as an Allow. Called from the popup row click and the ⌘⇧⏎ chord. */
+  private acceptAllowAlways(rule: AllowRule): void {
+    if (!this.allowRules.some((r) => r.display === rule.display)) {
+      this.allowRules.push(rule);
+    }
+    const active = this.activePermissionRequest;
+    const input = active?.input ?? {};
+    this.settlePermissionRequest({ behavior: "allow", updatedInput: input });
   }
 
   private hidePermissionDialog(): void {
@@ -1811,8 +2146,22 @@ export class ClaudeForObsidianView extends ItemView {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         e.stopPropagation();
-        const input = this.activePermissionRequest.input ?? {};
-        this.settlePermissionRequest({ behavior: "allow", updatedInput: input });
+        if (e.shiftKey) {
+          // ⌘⇧⏎ = Allow always for the most-permissive scope
+          // (tool-wide). Matches native's chord. Generates the
+          // tool-wide rule on the fly so we always have an "all"
+          // option even if the suggestion list was de-duplicated.
+          const active = this.activePermissionRequest;
+          const rule: AllowRule = {
+            toolName: active.toolName,
+            pattern: null,
+            display: active.toolName,
+          };
+          this.acceptAllowAlways(rule);
+        } else {
+          const input = this.activePermissionRequest.input ?? {};
+          this.settlePermissionRequest({ behavior: "allow", updatedInput: input });
+        }
         return;
       }
     };
@@ -1902,6 +2251,10 @@ export class ClaudeForObsidianView extends ItemView {
       this.currentSession = null;
     }
     this.turnBusy = false;
+    // Allow-rules are session-scoped. Wipe on chat boundary so the
+    // next chat starts with a clean rule set — same contract as
+    // native's per-session rules.
+    this.allowRules = [];
   }
 
   private setBusy(busy: boolean): void {
