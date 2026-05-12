@@ -192,12 +192,6 @@
   box-shadow: none !important;
 }
 
-.cfo-header-btn:disabled,
-.cfo-header-btn-disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
 .cfo-header-btn .svg-icon {
   width: 16px;
   height: 16px;

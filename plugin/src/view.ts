@@ -602,10 +602,6 @@ export class ClaudeForObsidianView extends ItemView {
     this.chatTitleEl.onclick = (evt) => this.toggleHistoryMenu(evt);
     this.refreshChatTitle();
     headerRow.createDiv({ cls: "cfo-header-spacer" });
-    const transcriptBtn = headerRow.createEl("button", { cls: "cfo-header-btn cfo-header-btn-disabled" });
-    setIcon(transcriptBtn, "list");
-    transcriptBtn.title = "Transcript view mode (coming soon)";
-    transcriptBtn.disabled = true;
     const saveBtn = headerRow.createEl("button", { cls: "cfo-header-btn" });
     setIcon(saveBtn, "download");
     saveBtn.title = "Save chat to vault";
