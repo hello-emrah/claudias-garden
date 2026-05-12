@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, TFile, normalizePath, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, TFile, Modal, App, normalizePath, setIcon } from "obsidian";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -155,6 +155,85 @@ const GIT_SAFE_SUBCOMMANDS = new Set<string>([
   "ls-files", "ls-tree", "rev-parse", "blame", "describe",
   "tag", "stash", "shortlog", "reflog",
 ]);
+
+/**
+ * Confirmation modal shown the first time a user picks
+ * `Bypass permissions` mode in this vault. Matches the native Claude
+ * Code CLI's "Bypass all permissions?" dialog — title, warning copy,
+ * workspace path, footer note about not asking again, and a primary
+ * `Bypass permissions` button paired with a Cancel.
+ *
+ * Returns a Promise<boolean>: true if the user confirmed, false on
+ * cancel / Esc / outside click.
+ */
+export class BypassConfirmModal extends Modal {
+  private resolver?: (v: boolean) => void;
+  private settled = false;
+
+  constructor(app: App, private workspacePath: string) {
+    super(app);
+  }
+
+  /** Open the modal and resolve when the user picks a button or
+   *  dismisses. Await this from the caller. */
+  prompt(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      this.resolver = resolve;
+      this.open();
+    });
+  }
+
+  onOpen(): void {
+    const { contentEl, titleEl } = this;
+    this.modalEl.addClass("cfo-bypass-modal");
+    titleEl.setText("Bypass all permissions?");
+
+    contentEl.empty();
+    contentEl.createEl("p", {
+      cls: "cfo-bypass-body",
+      text: "Claude will read, edit, and execute files without asking — including potentially destructive commands. Only use this in isolated or disposable environments.",
+    });
+    contentEl.createDiv({ cls: "cfo-bypass-path", text: this.workspacePath });
+    contentEl.createDiv({
+      cls: "cfo-bypass-footnote",
+      text: "You won't be asked again for this workspace.",
+    });
+
+    const footer = contentEl.createDiv({ cls: "cfo-bypass-footer" });
+    const cancelBtn = footer.createEl("button", { cls: "cfo-bypass-btn" });
+    cancelBtn.setText("Cancel");
+    cancelBtn.onclick = () => {
+      this.settle(false);
+    };
+
+    const okBtn = footer.createEl("button", {
+      cls: "cfo-bypass-btn cfo-bypass-btn-primary mod-cta",
+    });
+    okBtn.setText("Bypass permissions");
+    okBtn.onclick = () => {
+      this.settle(true);
+    };
+
+    // Focus the cancel button by default — destructive primary should
+    // require an explicit click rather than a stray Enter.
+    setTimeout(() => cancelBtn.focus(), 0);
+  }
+
+  onClose(): void {
+    // Settle as false on any close path we didn't explicitly handle
+    // (Esc, outside-click, programmatic close). Idempotent via the
+    // settled flag.
+    this.settle(false);
+    this.contentEl.empty();
+  }
+
+  private settle(result: boolean): void {
+    if (this.settled) return;
+    this.settled = true;
+    if (this.resolver) this.resolver(result);
+    this.close();
+  }
+}
 
 function isSafeBashCommand(command: string): boolean {
   if (!command || typeof command !== "string") return false;
@@ -2029,7 +2108,22 @@ export class ClaudeForObsidianView extends ItemView {
       }
       row.onclick = async (e) => {
         e.stopPropagation();
-        this.plugin.settings.permissionMode = m.id as PermissionMode;
+        const targetMode = m.id as PermissionMode;
+        // Bypass permissions is destructive on read, edit, AND execute.
+        // Match the native CLI behaviour: require an explicit confirmation
+        // the first time per vault. Once confirmed, subsequent picks of
+        // bypass skip the modal.
+        if (
+          targetMode === "bypassPermissions" &&
+          !this.plugin.settings.bypassPermissionsConfirmed
+        ) {
+          this.editsBtn.removeClass("cfo-btn-active");
+          popup.remove();
+          const ok = await new BypassConfirmModal(this.app, this.resolveCwd()).prompt();
+          if (!ok) return; // user cancelled — leave the mode unchanged
+          this.plugin.settings.bypassPermissionsConfirmed = true;
+        }
+        this.plugin.settings.permissionMode = targetMode;
         await this.plugin.saveSettings();
         this.refreshEditsBtn();
         this.editsBtn.removeClass("cfo-btn-active");

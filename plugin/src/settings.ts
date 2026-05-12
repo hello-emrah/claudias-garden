@@ -17,6 +17,11 @@ export interface ClaudeForObsidianSettings {
   permissionMode: PermissionMode;
   activeSessionId: string | null;
   sessionLabels: Record<string, string>;
+  // Once the user has confirmed bypassPermissions for this vault
+  // ("Bypass all permissions?" modal), don't re-prompt on subsequent
+  // mode picks. Per-vault state — `data.json` is per-vault by Obsidian
+  // convention, so this naturally scopes to the workspace.
+  bypassPermissionsConfirmed: boolean;
 }
 
 export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
@@ -26,6 +31,7 @@ export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
   permissionMode: "acceptEdits",
   activeSessionId: null,
   sessionLabels: {},
+  bypassPermissionsConfirmed: false,
 };
 
 // Model IDs the `claude --model` flag accepts. Re-verified 2026-05-12
@@ -91,21 +97,14 @@ export class ClaudeForObsidianSettingTab extends PluginSettingTab {
           })
       );
 
-    // Model and effort are managed via the bottom-nav popup in the
-    // chat panel — they are the canonical surface. The Settings tab
-    // text-field for Model was retired 2026-05-11 to prevent stale
-    // free-form strings ending up in `settings.model`.
-
-    new Setting(containerEl)
-      .setName("Permission mode")
-      .setDesc("How the CLI handles tool permissions. 'default' will prompt and likely hang in headless mode until permission UI lands. 'acceptEdits' is a sane starting point. The bottom-nav mode picker in the chat panel is the day-to-day surface.")
-      .addDropdown((dd) => {
-        for (const m of MODE_OPTIONS) dd.addOption(m.id, m.label);
-        dd.setValue(this.plugin.settings.permissionMode);
-        dd.onChange(async (value) => {
-          this.plugin.settings.permissionMode = value as PermissionMode;
-          await this.plugin.saveSettings();
-        });
-      });
+    // Model, effort, and permission mode are managed via the
+    // bottom-nav pickers in the chat panel — they are the canonical
+    // surface. The Settings tab dropdowns were retired:
+    //   - Model field on 2026-05-11 (prevent stale free-form strings
+    //     ending up in settings.model).
+    //   - Permission mode on 2026-05-12 (same reason — and the bypass
+    //     confirmation modal lives on the panel-side picker only).
+    // What remains in the Settings tab is genuinely system-level
+    // configuration (binary path).
   }
 }

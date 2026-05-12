@@ -532,6 +532,76 @@
   background: rgba(255, 255, 255, 0.18);
 }
 
+/* Bypass-permissions confirmation modal (cfob-i6-bypass-confirm, v0.6.2).
+   One-time-per-vault dialog shown when the user picks Bypass permissions
+   in either the bottom-nav mode picker or the Settings tab dropdown.
+   Matches the native CLI chrome — title, warning body, workspace path,
+   footer note, Cancel/Bypass-permissions button pair. */
+.cfo-bypass-modal .modal-title {
+  font-size: 1.05em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.cfo-bypass-modal .modal-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cfo-bypass-body {
+  color: var(--text-normal);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.cfo-bypass-path {
+  font-family: var(--font-monospace);
+  font-size: 0.95em;
+  color: var(--text-normal);
+  word-break: break-all;
+}
+
+.cfo-bypass-footnote {
+  color: var(--text-muted);
+  font-size: 0.92em;
+}
+
+.cfo-bypass-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.cfo-bypass-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: 0.95em;
+}
+
+.cfo-bypass-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.cfo-bypass-btn-primary {
+  background: var(--text-normal);
+  color: var(--background-primary);
+  border-color: var(--text-normal);
+  font-weight: 500;
+}
+
+.cfo-bypass-btn-primary:hover {
+  background: var(--text-normal);
+  color: var(--background-primary);
+  filter: brightness(0.92);
+}
+
 .cfo-tool-row-chevron {
   display: inline-flex;
   align-items: center;
