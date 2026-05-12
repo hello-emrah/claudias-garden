@@ -2489,11 +2489,20 @@ export class ClaudeForObsidianView extends ItemView {
           if (!ok) return; // user cancelled — leave the mode unchanged
           this.plugin.settings.bypassPermissionsConfirmed = true;
         }
+        const prevMode = this.plugin.settings.permissionMode;
         this.plugin.settings.permissionMode = targetMode;
         await this.plugin.saveSettings();
         this.refreshEditsBtn();
         this.editsBtn.removeClass("cfo-btn-active");
         popup.remove();
+        // The CLI's `set_permission_mode` control_request requires an
+        // SDK callback that's only registered when started via the
+        // SDK bridge. In stream-json stdin/stdout mode (us), the
+        // request returns an explicit "not supported" error. Notice
+        // the user so the new mode is visibly tied to "next chat".
+        if (this.currentSession?.isAlive && targetMode !== prevMode) {
+          new Notice("Mode change takes effect on the next chat.");
+        }
       };
     }
 
@@ -2572,11 +2581,24 @@ export class ClaudeForObsidianView extends ItemView {
         // Context window may have changed (1M ↔ 200k). Recalibrate
         // the battery immediately so the user sees the new ceiling.
         this.renderBattery();
+        // The CLI's `set_model` / `apply_flag_settings` control_requests
+        // require an SDK callback the CLI only registers when started
+        // via the SDK bridge (`--sdk-url`). In stream-json stdin/stdout
+        // mode (us), the request is silently dropped. Tell the user
+        // explicitly so the new model is visibly tied to "next chat".
+        if (this.currentSession?.isAlive) {
+          new Notice("Model change takes effect on the next chat.");
+        }
       },
       onEffortChange: async (effort) => {
         this.plugin.settings.effort = effort;
         await this.plugin.saveSettings();
         this.refreshModelBtn();
+        // Same SDK-callback gating as model — silently dropped in
+        // stream-json mode. Notice the user.
+        if (this.currentSession?.isAlive) {
+          new Notice("Effort change takes effect on the next chat.");
+        }
       },
     });
   }
