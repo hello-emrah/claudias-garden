@@ -486,32 +486,39 @@
   flex: 1;
 }
 
+/* Flat-chrome permission buttons. Match the v0.4.7 nav-button design
+   call: no shadows, no rest-state borders, hover state is a solid
+   contrasting background. !important defeats Obsidian's higher-
+   specificity button:not(.mod-cta) theme rules (same trick the
+   bottom nav uses for its flat chrome). */
 .cfo-permission-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
   border-radius: 6px;
-  border: 1px solid var(--background-modifier-border);
-  background: var(--background-primary);
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
   color: var(--text-normal);
   font-size: 0.95em;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .cfo-permission-btn:hover {
-  background: var(--background-modifier-hover);
+  background: var(--background-modifier-hover) !important;
+  box-shadow: none !important;
 }
 
 .cfo-permission-btn-allow {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border-color: var(--interactive-accent);
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent) !important;
+  border-color: transparent !important;
 }
 
 .cfo-permission-btn-allow:hover {
-  background: var(--interactive-accent-hover, var(--interactive-accent));
+  background: var(--interactive-accent-hover, var(--interactive-accent)) !important;
   filter: brightness(1.08);
 }
 
@@ -525,7 +532,7 @@
   opacity: 0.75;
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.18);
 }
 
 .cfo-permission-btn-allow .cfo-permission-chord {
@@ -539,9 +546,21 @@
   color: var(--text-normal);
 }
 
+/* While a popup spawned by a permission button is open, the trigger
+   carries a solid contrasting background to telegraph the active
+   state. Same pattern as the v0.4.7 nav buttons. */
 .cfo-permission-btn-active {
-  background: var(--background-modifier-hover);
-  border-color: var(--interactive-accent);
+  background: var(--background-modifier-hover) !important;
+}
+
+/* Bypass-permissions mode chip — when the user has opted into the
+   no-prompts-at-all mode, both the label and chevron carry the
+   warning colour so it's always visible at a glance in the bottom
+   nav that permission prompts are off. Matches native Claude Code's
+   treatment. */
+.cfo-edits-btn-bypass .cfo-edits-btn-label,
+.cfo-edits-btn-bypass .cfo-edits-btn-chevron {
+  color: var(--text-warning, var(--color-yellow, #d6a619)) !important;
 }
 
 /* Popup spawned by the Allow-always button. Lives in document.body so

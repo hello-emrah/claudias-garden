@@ -1879,15 +1879,24 @@ export class ClaudeForObsidianView extends ItemView {
     // "Allow always" — opens a small inline popup with three scope
     // options (this exact, prefix-pattern, tool-wide). Each option
     // click adds a session-scoped rule AND allows the call.
-    const alwaysBtn = footer.createEl("button", {
-      cls: "cfo-permission-btn cfo-permission-btn-always",
-    });
-    alwaysBtn.createSpan({ text: "Allow always" });
-    alwaysBtn.createSpan({ cls: "cfo-permission-chord", text: "▾" });
-    alwaysBtn.onclick = (e) => {
-      e.stopPropagation();
-      this.toggleAllowAlwaysPopup(alwaysBtn, req);
-    };
+    // Hide entirely when a safety override would bypass any rule the
+    // user might add — offering the button in that case would be
+    // misleading (the override always wins). Matches native's
+    // behaviour where permission_suggestions is empty for these cases.
+    const safetyBlocksRule =
+      req.toolName === "Bash" &&
+      hasBashSafetyOverride(typeof req.input?.command === "string" ? req.input.command : "");
+    if (!safetyBlocksRule) {
+      const alwaysBtn = footer.createEl("button", {
+        cls: "cfo-permission-btn cfo-permission-btn-always",
+      });
+      alwaysBtn.createSpan({ text: "Allow always" });
+      alwaysBtn.createSpan({ cls: "cfo-permission-chord", text: "▾" });
+      alwaysBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleAllowAlwaysPopup(alwaysBtn, req);
+      };
+    }
 
     const allowBtn = footer.createEl("button", { cls: "cfo-permission-btn cfo-permission-btn-allow" });
     allowBtn.createSpan({ text: "Allow once" });
@@ -2425,6 +2434,10 @@ export class ClaudeForObsidianView extends ItemView {
     const mode = this.plugin.settings.permissionMode;
     const opt = MODE_OPTIONS.find((m) => m.id === mode);
     const label = opt?.label ?? mode;
+    // Highlight the chip in warning colour when bypass is the active
+    // mode — matches native Claude Code's bottom-nav treatment so the
+    // user always knows when permission prompts are off.
+    this.editsBtn.toggleClass("cfo-edits-btn-bypass", mode === "bypassPermissions");
     this.editsBtn.createSpan({ cls: "cfo-edits-btn-label", text: label });
     const chevron = this.editsBtn.createSpan({ cls: "cfo-edits-btn-chevron" });
     setIcon(chevron, "chevron-down");

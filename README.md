@@ -192,7 +192,7 @@ The plugin does not duplicate or override these. It inherits them by setting the
 
 ## Status
 
-Early. Built for one operator, shared because it might help others. Current tag: `v0.6.3`.
+Early. Built for one operator, shared because it might help others. Current tag: `v0.6.4`.
 
 Shipped:
 
