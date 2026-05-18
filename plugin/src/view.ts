@@ -6,6 +6,7 @@ import { ClaudeSession, StreamEvent, PermissionDecision, ContextUsageResponse } 
 import { lineDiff, renderDiff } from "./diff";
 import { exportSession } from "./chat-export";
 import { WikilinkSuggest } from "./wikilink-suggest";
+import { SlashSuggest, SlashCommand } from "./slash-suggest";
 import { openModelPopup } from "./model-popup";
 import { MODEL_OPTIONS, EFFORT_OPTIONS, MODE_OPTIONS, PermissionMode } from "./settings";
 import { renderToolRow, RenderOutput, ToolResult } from "./tool-renderers";
@@ -544,6 +545,8 @@ export class ClaudeForObsidianView extends ItemView {
   private lastStderr: string | null = null;
   private lastDateKey: string | null = null;
   private wikilinkSuggest: WikilinkSuggest | null = null;
+  private slashSuggest: SlashSuggest | null = null;
+  private slashCommandsCache: SlashCommand[] | null = null;
   private pendingTools: Map<
     string,
     { el: HTMLElement; startedAt: number; group: ToolGroup; name: string; input: any }
@@ -660,7 +663,7 @@ export class ClaudeForObsidianView extends ItemView {
     this.sendStopBtn.onclick = () => this.toggleSendStop();
     this.inputEl.addEventListener("input", () => this.autosizeInput());
     this.inputEl.addEventListener("keydown", (e) => {
-      if (this.wikilinkSuggest?.isOpen()) return;
+      if (this.wikilinkSuggest?.isOpen() || this.slashSuggest?.isOpen()) return;
       if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         this.toggleSendStop();
@@ -671,6 +674,7 @@ export class ClaudeForObsidianView extends ItemView {
     });
 
     this.wikilinkSuggest = new WikilinkSuggest(this.app, this.inputEl);
+    this.slashSuggest = new SlashSuggest(this.inputEl, () => this.getSlashCommands());
 
     this.renderComponent.load();
   }
@@ -688,6 +692,10 @@ export class ClaudeForObsidianView extends ItemView {
     if (this.wikilinkSuggest) {
       this.wikilinkSuggest.destroy();
       this.wikilinkSuggest = null;
+    }
+    if (this.slashSuggest) {
+      this.slashSuggest.destroy();
+      this.slashSuggest = null;
     }
     this.renderComponent.unload();
   }
@@ -713,6 +721,166 @@ export class ClaudeForObsidianView extends ItemView {
 
   private vaultName(): string {
     return this.app.vault.getName();
+  }
+
+  // ---------- slash commands ----------
+
+  /** Memoised per panel-open. Skills and custom commands don't change
+   *  within a panel session; rediscovery happens on next panel open. */
+  private getSlashCommands(): SlashCommand[] {
+    if (this.slashCommandsCache) return this.slashCommandsCache;
+    this.slashCommandsCache = this.discoverSlashCommands();
+    return this.slashCommandsCache;
+  }
+
+  /** Enumerate the reachable slash surface: skills (resolved by the
+   *  CLI via /skill-name) and custom command markdown files. Vault-local
+   *  definitions override the home-level ones of the same name. */
+  private discoverSlashCommands(): SlashCommand[] {
+    const cwd = this.resolveCwd();
+    const home = os.homedir();
+    const byName = new Map<string, SlashCommand>();
+
+    // Skills: home first, then vault so the vault wins on collision.
+    for (const base of [home, cwd]) {
+      const skillsDir = path.join(base, ".claude", "skills");
+      let entries: string[] = [];
+      try {
+        entries = fs.readdirSync(skillsDir);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        const skillMd = path.join(skillsDir, entry, "SKILL.md");
+        let text: string;
+        try {
+          if (!fs.statSync(path.join(skillsDir, entry)).isDirectory()) continue;
+          text = fs.readFileSync(skillMd, "utf8");
+        } catch {
+          continue;
+        }
+        const fm = this.parseFrontmatter(text);
+        const name = (fm.name || entry).trim();
+        byName.set(name, {
+          name,
+          description: (fm.description || "").trim(),
+          kind: "skill",
+        });
+      }
+    }
+
+    // Custom commands: same precedence.
+    for (const base of [home, cwd]) {
+      const cmdDir = path.join(base, ".claude", "commands");
+      let entries: string[] = [];
+      try {
+        entries = fs.readdirSync(cmdDir);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.endsWith(".md")) continue;
+        const name = entry.slice(0, -3);
+        let text = "";
+        try {
+          text = fs.readFileSync(path.join(cmdDir, entry), "utf8");
+        } catch {
+          continue;
+        }
+        const fm = this.parseFrontmatter(text);
+        let desc = (fm.description || "").trim();
+        if (!desc) {
+          const body = this.stripFrontmatter(text).trim();
+          desc = body.split("\n")[0]?.replace(/^#+\s*/, "").slice(0, 120) ?? "";
+        }
+        byName.set(name, { name, description: desc, kind: "command" });
+      }
+    }
+
+    return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private stripFrontmatter(text: string): string {
+    if (!text.startsWith("---")) return text;
+    const end = text.indexOf("\n---", 3);
+    if (end === -1) return text;
+    const after = text.indexOf("\n", end + 1);
+    return after === -1 ? "" : text.slice(after + 1);
+  }
+
+  private parseFrontmatter(text: string): { name?: string; description?: string } {
+    if (!text.startsWith("---")) return {};
+    const end = text.indexOf("\n---", 3);
+    if (end === -1) return {};
+    const block = text.slice(3, end);
+    const out: { name?: string; description?: string } = {};
+    const lines = block.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(/^(name|description)\s*:\s*(.*)$/);
+      if (!m) continue;
+      const key = m[1] as "name" | "description";
+      let val = m[2].trim();
+      // YAML folded/literal block scalar (`>`, `|`, with optional
+      // chomping indicator): join the indented continuation lines.
+      if (/^[>|][+-]?$/.test(val)) {
+        const parts: string[] = [];
+        for (let j = i + 1; j < lines.length; j++) {
+          if (/^\S/.test(lines[j])) break;
+          if (lines[j].trim() === "" ) continue;
+          parts.push(lines[j].trim());
+        }
+        val = parts.join(" ");
+      }
+      out[key] = val.replace(/^["']|["']$/g, "");
+    }
+    return out;
+  }
+
+  /** Expand a custom command into its prompt body before the message
+   *  goes to the CLI. Skills pass through unchanged ( the CLI resolves
+   *  /skill-name itself ); unknown /tokens also pass through so the CLI
+   *  can surface its own error. $ARGUMENTS gets the full argument
+   *  string, $1..$9 the positional args. */
+  private expandSlashCommand(input: string): string {
+    const m = input.match(/^\/([^\s/]+)\s*([\s\S]*)$/);
+    if (!m) return input;
+    const name = m[1];
+    const argStr = m[2].trim();
+    const cmd = this.getSlashCommands().find((c) => c.name === name && c.kind === "command");
+    if (!cmd) return input;
+
+    const cwd = this.resolveCwd();
+    const home = os.homedir();
+    let text: string | null = null;
+    for (const base of [cwd, home]) {
+      try {
+        text = fs.readFileSync(path.join(base, ".claude", "commands", `${name}.md`), "utf8");
+        break;
+      } catch {
+        /* try next base */
+      }
+    }
+    if (text === null) return input;
+
+    let body = this.stripFrontmatter(text).trim();
+    if (!body) return input;
+    const positional = argStr.length > 0 ? argStr.split(/\s+/) : [];
+    body = body.replace(/\$ARGUMENTS/g, argStr);
+    body = body.replace(/\$([1-9])/g, (_, d) => positional[Number(d) - 1] ?? "");
+    return body;
+  }
+
+  /** Plus-menu entry point: focus the input and open the palette by
+   *  seeding a leading "/" when the message doesn't already start one. */
+  private openSlashPalette(): void {
+    if (!this.inputEl) return;
+    this.inputEl.focus();
+    const v = this.inputEl.value;
+    if (!/^\s*\//.test(v)) {
+      this.inputEl.value = `/${v}`;
+      this.inputEl.setSelectionRange(1, 1);
+    }
+    this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   private setTitleText(text: string): void {
@@ -2278,7 +2446,9 @@ export class ClaudeForObsidianView extends ItemView {
         onEvent: (e) => this.handleEvent(e),
       });
     }
-    this.currentSession.sendMessage(prompt);
+    // Display keeps what the user typed (/cmd args); the CLI gets the
+    // client-side-expanded body for custom commands. Skills pass through.
+    this.currentSession.sendMessage(this.expandSlashCommand(prompt));
   }
 
   private cancel(): void {
@@ -2661,11 +2831,11 @@ export class ClaudeForObsidianView extends ItemView {
     popup.style.bottom = `${win.innerHeight - rect.top + 6}px`;
     popup.style.left = `${Math.max(8, rect.left)}px`;
 
-    type Row = { icon: string; label: string; comingSoon: string };
+    type Row = { icon: string; label: string; comingSoon?: string; action?: () => void };
     const rows: Row[] = [
       { icon: "paperclip", label: "Add files or photos", comingSoon: "Attach files. Coming soon." },
       { icon: "folder", label: "Add folder", comingSoon: "Attach a folder. Coming soon." },
-      { icon: "slash", label: "Slash commands", comingSoon: "Slash commands like /compact and /help, plus your installed skills. Coming soon." },
+      { icon: "slash", label: "Slash commands", action: () => this.openSlashPalette() },
     ];
     for (const r of rows) {
       const row = popup.createDiv({ cls: "cfo-plus-menu-row" });
@@ -2676,7 +2846,8 @@ export class ClaudeForObsidianView extends ItemView {
         e.stopPropagation();
         triggerEl.removeClass("cfo-btn-active");
         popup.remove();
-        new Notice(r.comingSoon);
+        if (r.action) r.action();
+        else if (r.comingSoon) new Notice(r.comingSoon);
       };
     }
 
