@@ -225,6 +225,13 @@ export class ClaudeSession {
     if (this.opts.resumeSessionId) {
       args.push("--resume", this.opts.resumeSessionId);
     }
+    // Extra tool-access directories beyond the vault cwd. Pushed last
+    // so the variadic flag's value list ends at the end of argv and
+    // can't swallow a following option.
+    const addDirs = this.opts.settings.addDirs ?? [];
+    if (addDirs.length > 0) {
+      args.push("--add-dir", ...addDirs);
+    }
 
     const env = { ...process.env };
     const pathAdditions = ["/opt/homebrew/bin", "/usr/local/bin"];

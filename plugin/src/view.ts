@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, Notice, MarkdownRenderer, Component, TFile, Mo
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { execFile } from "child_process";
 import { ClaudeSession, StreamEvent, PermissionDecision, ContextUsageResponse } from "./claude-client";
 import { lineDiff, renderDiff } from "./diff";
 import { exportSession } from "./chat-export";
@@ -547,6 +548,7 @@ export class ClaudeForObsidianView extends ItemView {
   private wikilinkSuggest: WikilinkSuggest | null = null;
   private slashSuggest: SlashSuggest | null = null;
   private slashCommandsCache: SlashCommand[] | null = null;
+  private addDirRowEl: HTMLDivElement | null = null;
   private pendingTools: Map<
     string,
     { el: HTMLElement; startedAt: number; group: ToolGroup; name: string; input: any }
@@ -629,6 +631,9 @@ export class ClaudeForObsidianView extends ItemView {
 
     this.statusEl = inputStack.createDiv({ cls: "cfo-status" });
 
+    this.addDirRowEl = inputStack.createDiv({ cls: "cfo-adddir-row" });
+    this.renderAddDirRow();
+
     const textBox = inputStack.createDiv({ cls: "cfo-textbox" });
     this.inputEl = textBox.createEl("textarea", { cls: "cfo-input" });
     this.inputEl.placeholder = "Type / for commands, [[ for wikilinks";
@@ -646,7 +651,7 @@ export class ClaudeForObsidianView extends ItemView {
 
     const plusBtn = footerNav.createEl("button", { cls: "cfo-footer-btn" });
     setIcon(plusBtn, "plus");
-    plusBtn.title = "Add (coming soon)";
+    plusBtn.title = "Add";
     plusBtn.onclick = () => this.togglePlusMenu(plusBtn);
 
     footerNav.createDiv({ cls: "cfo-footer-spacer" });
@@ -672,6 +677,8 @@ export class ClaudeForObsidianView extends ItemView {
         this.cancel();
       }
     });
+
+    this.inputEl.addEventListener("paste", (e) => this.onInputPaste(e));
 
     this.wikilinkSuggest = new WikilinkSuggest(this.app, this.inputEl);
     this.slashSuggest = new SlashSuggest(this.inputEl, () => this.getSlashCommands());
@@ -881,6 +888,186 @@ export class ClaudeForObsidianView extends ItemView {
       this.inputEl.setSelectionRange(1, 1);
     }
     this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  // ---------- extra folder access (--add-dir) ----------
+
+  /** Removable chips above the input listing the extra directories the
+   *  agent may touch beyond the vault. Hidden (`:empty`) when none. */
+  private renderAddDirRow(): void {
+    if (!this.addDirRowEl) return;
+    this.addDirRowEl.empty();
+    const dirs = this.plugin.settings.addDirs ?? [];
+    for (const dir of dirs) {
+      const chip = this.addDirRowEl.createDiv({ cls: "cfo-adddir-chip" });
+      chip.title = dir;
+      const icon = chip.createSpan({ cls: "cfo-adddir-chip-icon" });
+      setIcon(icon, "folder");
+      chip.createSpan({ cls: "cfo-adddir-chip-label", text: path.basename(dir) || dir });
+      const x = chip.createSpan({ cls: "cfo-adddir-chip-x" });
+      setIcon(x, "x");
+      x.setAttribute("aria-label", `Remove ${dir}`);
+      x.onclick = (e) => {
+        e.stopPropagation();
+        this.removeAddDir(dir);
+      };
+    }
+  }
+
+  /** macOS native folder chooser via osascript — matches the plugin's
+   *  subprocess-everything architecture and avoids coupling to a
+   *  specific Electron remote API surface. Desktop/macOS only, which
+   *  is the plugin's declared platform. */
+  private pickAndAddDir(): void {
+    execFile(
+      "osascript",
+      ["-e", 'POSIX path of (choose folder with prompt "Add a folder Claude can access")'],
+      (err, stdout) => {
+        if (err) return; // user cancelled, or osascript unavailable
+        const dir = stdout.trim().replace(/\/+$/, "");
+        if (!dir) return;
+        let isDir = false;
+        try {
+          isDir = fs.statSync(dir).isDirectory();
+        } catch {
+          isDir = false;
+        }
+        if (!isDir) {
+          new Notice("That path is not a folder.");
+          return;
+        }
+        const cwd = this.resolveCwd();
+        if (dir === cwd || dir.startsWith(cwd + "/")) {
+          new Notice("That folder is already inside the vault — Claude can reach it.");
+          return;
+        }
+        const dirs = this.plugin.settings.addDirs ?? [];
+        if (dirs.includes(dir)) {
+          new Notice("That folder is already added.");
+          return;
+        }
+        this.plugin.settings.addDirs = [...dirs, dir];
+        this.plugin.saveSettings();
+        this.renderAddDirRow();
+        this.notifyAddDirChanged();
+      },
+    );
+  }
+
+  private removeAddDir(dir: string): void {
+    const dirs = this.plugin.settings.addDirs ?? [];
+    this.plugin.settings.addDirs = dirs.filter((d) => d !== dir);
+    this.plugin.saveSettings();
+    this.renderAddDirRow();
+    this.notifyAddDirChanged();
+  }
+
+  /** Folder access is read from settings at subprocess spawn, so a
+   *  change only takes effect on the next chat — same contract as the
+   *  model / mode / effort pickers (v0.6.5). */
+  private notifyAddDirChanged(): void {
+    if (this.currentSession) {
+      new Notice("Folder access changes apply to the next chat.");
+    }
+  }
+
+  // ---------- file attachments (path references) ----------
+
+  /** Absolute filesystem path of a pasted/dropped File. Obsidian's
+   *  Electron historically exposes the non-standard `File.path`; newer
+   *  Electron moved it behind `webUtils.getPathForFile`. Try both. A
+   *  clipboard image (screenshot, copy-image-from-web) is synthetic
+   *  bitmap data with no on-disk path — returns null. */
+  private resolveFilePath(file: File): string | null {
+    const direct = (file as unknown as { path?: string }).path;
+    if (direct) return direct;
+    try {
+      const electron = (window as { require?: (m: string) => unknown }).require?.("electron") as
+        | { webUtils?: { getPathForFile?: (f: File) => string } }
+        | undefined;
+      const p = electron?.webUtils?.getPathForFile?.(file);
+      if (p) return p;
+    } catch {
+      /* not in an Electron renderer that exposes webUtils */
+    }
+    return null;
+  }
+
+  private insertAtCursor(text: string): void {
+    const el = this.inputEl;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const before = el.value.slice(0, start);
+    const after = el.value.slice(end);
+    const pad = before.length > 0 && !before.endsWith(" ") && !before.endsWith("\n") ? " " : "";
+    const insert = `${pad}${text} `;
+    el.value = `${before}${insert}${after}`;
+    const caret = before.length + insert.length;
+    el.setSelectionRange(caret, caret);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.focus();
+  }
+
+  /** Insert a reference the agent can act on. In-vault files become a
+   *  vault-relative path (cwd is the vault, so the Read tool resolves
+   *  it directly); out-of-vault files become an absolute path, with a
+   *  nudge to grant the folder if it isn't already in scope. */
+  private insertFileReference(absPath: string): void {
+    const cwd = this.resolveCwd();
+    const inVault = absPath === cwd || absPath.startsWith(cwd + "/");
+    const ref = inVault ? absPath.slice(cwd.length + 1) : absPath;
+    this.insertAtCursor(ref);
+    if (!inVault) {
+      const dir = path.dirname(absPath);
+      const dirs = this.plugin.settings.addDirs ?? [];
+      const granted = dirs.some((d) => dir === d || dir.startsWith(d + "/"));
+      if (!granted) {
+        new Notice("That file is outside the vault — add its folder via + → Add folder so Claude can read it.");
+      }
+    }
+  }
+
+  private onInputPaste(e: ClipboardEvent): void {
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (files.length === 0) return; // plain text/markdown — let it paste
+    const paths: string[] = [];
+    let sawPathlessImage = false;
+    for (const f of files) {
+      const p = this.resolveFilePath(f);
+      if (p) paths.push(p);
+      else if (f.type.startsWith("image/")) sawPathlessImage = true;
+    }
+    if (paths.length === 0) {
+      if (sawPathlessImage) {
+        e.preventDefault();
+        new Notice(
+          "Pasted images can't be sent (Claude Code's plugin pipe doesn't accept images). Save it to a file and attach the file instead.",
+        );
+      }
+      return;
+    }
+    e.preventDefault();
+    for (const p of paths) this.insertFileReference(p);
+  }
+
+  /** macOS native file chooser (multiple), mirroring the Add-folder
+   *  osascript pattern. */
+  private pickAndAddFiles(): void {
+    const script =
+      'set theFiles to choose file with prompt "Attach file(s)" with multiple selections allowed\n' +
+      'set out to ""\n' +
+      "repeat with f in theFiles\n" +
+      "set out to out & POSIX path of f & linefeed\n" +
+      "end repeat\n" +
+      "return out";
+    execFile("osascript", ["-e", script], (err, stdout) => {
+      if (err) return; // cancelled
+      const picked = stdout
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const p of picked) this.insertFileReference(p);
+    });
   }
 
   private setTitleText(text: string): void {
@@ -2017,7 +2204,14 @@ export class ClaudeForObsidianView extends ItemView {
       if (!p) return false;
       const cwd = this.resolveCwd();
       if (!cwd) return false;
-      return !p.startsWith(cwd);
+      // The vault (cwd) plus any folders the user explicitly granted
+      // via Add folder are in-scope and don't need a dialog — the
+      // grant is the consent.
+      const allowedRoots = [cwd, ...(this.plugin.settings.addDirs ?? [])];
+      const inScope = allowedRoots.some(
+        (root) => p === root || p.startsWith(root + "/"),
+      );
+      return !inScope;
     }
     // Task / TodoWrite / Skill / ToolSearch / NotebookRead / others —
     // auto-allow. These are coordination tools, not file mutations.
@@ -2833,8 +3027,8 @@ export class ClaudeForObsidianView extends ItemView {
 
     type Row = { icon: string; label: string; comingSoon?: string; action?: () => void };
     const rows: Row[] = [
-      { icon: "paperclip", label: "Add files or photos", comingSoon: "Attach files. Coming soon." },
-      { icon: "folder", label: "Add folder", comingSoon: "Attach a folder. Coming soon." },
+      { icon: "paperclip", label: "Add files", action: () => this.pickAndAddFiles() },
+      { icon: "folder", label: "Add folder", action: () => this.pickAndAddDir() },
       { icon: "slash", label: "Slash commands", action: () => this.openSlashPalette() },
     ];
     for (const r of rows) {

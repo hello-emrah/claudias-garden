@@ -17,6 +17,11 @@ export interface ClaudeForObsidianSettings {
   permissionMode: PermissionMode;
   activeSessionId: string | null;
   sessionLabels: Record<string, string>;
+  // Extra directories the agent may touch, beyond the vault (cwd).
+  // Passed to the subprocess as `--add-dir`. The vault is always the
+  // working directory and is never listed here. Use case: convert a
+  // PDF that lives outside the vault into a note inside it.
+  addDirs: string[];
   // Once the user has confirmed bypassPermissions for this vault
   // ("Bypass all permissions?" modal), don't re-prompt on subsequent
   // mode picks. Per-vault state — `data.json` is per-vault by Obsidian
@@ -31,6 +36,7 @@ export const DEFAULT_SETTINGS: ClaudeForObsidianSettings = {
   permissionMode: "acceptEdits",
   activeSessionId: null,
   sessionLabels: {},
+  addDirs: [],
   bypassPermissionsConfirmed: false,
 };
 
