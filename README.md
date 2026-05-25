@@ -1,8 +1,25 @@
-# Claude for Obsidian
+<p align="center">
+  <img src="assets/logo.png" alt="Claudia's Garden" width="200" />
+</p>
 
-> Unofficial. Drives the Claude Code CLI from inside Obsidian, so the agent loop, tool use, skills, and `CLAUDE.md` discovery you use in the terminal or the VS Code extension also work in your vault.
+<h1 align="center">Claudia's Garden</h1>
 
-This plugin does not call the Anthropic API directly and does not handle API keys. It spawns the locally installed `claude` CLI as a subprocess, which means it uses whichever account that CLI is signed in to, including a Claude subscription.
+<p align="center">
+  Claudia, in your Obsidian vault.<br/>
+  Drives the Claude Code CLI as a subprocess so chats live inside the vault graph.<br/>
+  <strong>Wikilinks, dated chats, the same skills your terminal uses.</strong>
+</p>
+
+<p align="center">
+  <a href="https://buymeacoffee.com/hello_emrah"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-c46b44?logo=buymeacoffee&logoColor=ffffff&style=for-the-badge" alt="Buy Me a Coffee" /></a>
+</p>
+
+---
+
+> [!NOTE]
+> **Unofficial.** Claudia's Garden is not affiliated with Anthropic or the Obsidian team. "Claude" and "Obsidian" are trademarks of their respective owners. The plugin does not call the Anthropic API directly and does not handle API keys; it spawns the locally installed `claude` CLI as a subprocess, which means it uses whichever account that CLI is signed in to (including a Claude subscription).
+
+The pitch isn't *Claude in your sidebar* — that's been done. It's **Claude that lives inside the vault graph**. The chat surface inherits Obsidian's fabric (wikilinks, dates, tags, daily notes) instead of running parallel to it. The agent loop, tool use, skills, and `CLAUDE.md` discovery you already use in the terminal or the VS Code extension work here too, with the working directory locked to the active vault.
 
 ## Highlights
 
@@ -120,7 +137,7 @@ That opens an interactive Claude Code session. Paste this prompt, replacing `<yo
 
 ```text
 Install this Obsidian plugin into my vault at <your-vault-path>:
-https://github.com/hello-emrah/claude-for-obsidian
+https://github.com/hello-emrah/claudias-garden
 ```
 
 Claude reads this README, runs the right commands, and tells you when Phase 3 is needed. Don't close the terminal until it confirms it's done.
@@ -129,14 +146,14 @@ Claude reads this README, runs the right commands, and tells you when Phase 3 is
 
 1. Open Obsidian on the vault you installed into.
 2. **Settings → Community plugins**. If a "Turn on community plugins" prompt appears, click *Turn on*.
-3. Find **Claude for Obsidian** in the installed plugins list and toggle it on.
-4. Click the bot icon in the left ribbon, or run the **Open Claude for Obsidian panel** command. Send a test message.
+3. Find **Claudia's Garden** in the installed plugins list and toggle it on.
+4. Click the bot icon in the left ribbon, or run the **Open Claudia's Garden panel** command. Send a test message.
 
 If you get a reply, you're done. Enjoy.
 
 ### Plugin settings to check
 
-The plugin auto-detects the `claude` binary on first run, so you usually don't need to touch settings. If anything looks off, open **Settings → Claude for Obsidian** and confirm:
+The plugin auto-detects the `claude` binary on first run, so you usually don't need to touch settings. If anything looks off, open **Settings → Claudia's Garden** and confirm:
 
 - **Claude binary path** — should be auto-filled. If empty, run `which claude` in a terminal and paste the result here.
 - **Permission mode** — leave on `acceptEdits`. Don't switch to `default` (no permission UI yet, will hang on tool calls).
@@ -150,11 +167,11 @@ If you'd rather drive the install yourself instead of letting Claude Code do it.
 
 ```bash
 VAULT="<your-vault-path>"
-mkdir -p "$VAULT/.obsidian/plugins/claude-for-obsidian"
-cd "$VAULT/.obsidian/plugins/claude-for-obsidian"
-curl -L -o cfob.zip https://github.com/hello-emrah/claude-for-obsidian/releases/latest/download/claude-for-obsidian.zip
-unzip -o cfob.zip
-rm cfob.zip
+mkdir -p "$VAULT/.obsidian/plugins/claudias-garden"
+cd "$VAULT/.obsidian/plugins/claudias-garden"
+curl -L -o claudias-garden.zip https://github.com/hello-emrah/claudias-garden/releases/latest/download/claudias-garden.zip
+unzip -o claudias-garden.zip
+rm claudias-garden.zip
 ```
 
 #### Path B — clone and build (for contributors)
@@ -162,13 +179,13 @@ rm cfob.zip
 ```bash
 VAULT="<your-vault-path>"
 
-git clone https://github.com/hello-emrah/claude-for-obsidian.git ~/Developer/claude-for-obsidian
-cd ~/Developer/claude-for-obsidian/plugin
+git clone https://github.com/hello-emrah/claudias-garden.git ~/Developer/claudias-garden
+cd ~/Developer/claudias-garden/plugin
 npm install
 npm run build
 
-mkdir -p "$VAULT/.obsidian/plugins/claude-for-obsidian"
-cp main.js manifest.json styles.css "$VAULT/.obsidian/plugins/claude-for-obsidian/"
+mkdir -p "$VAULT/.obsidian/plugins/claudias-garden"
+cp main.js manifest.json styles.css "$VAULT/.obsidian/plugins/claudias-garden/"
 ```
 
 After either path, do Phase 3 above.
@@ -192,7 +209,7 @@ The plugin does not duplicate or override these. It inherits them by setting the
 
 ## Status
 
-Early. Built for one operator, shared because it might help others. Current tag: `v0.7.2`.
+Early. Built for one operator, shared because it might help others. Current version: `v0.9.0`. Approaching v1.0.0.
 
 Shipped:
 
@@ -213,10 +230,10 @@ Plugin source lives under `plugin/`. To work on it:
 
 1. Clone the repo.
 2. `cd plugin && npm install && npm run build` (or `npm run dev` for watch mode).
-3. Set up a dev vault and symlink the `plugin/` folder into its `.obsidian/plugins/claude-for-obsidian/`. The repo's `dev-vault/` path is gitignored.
+3. Set up a dev vault and symlink the `plugin/` folder into its `.obsidian/plugins/claudias-garden/`. The repo's `dev-vault/` path is gitignored.
 
 ```bash
-ln -s "$(pwd)/plugin" /path/to/dev-vault/.obsidian/plugins/claude-for-obsidian
+ln -s "$(pwd)/plugin" /path/to/dev-vault/.obsidian/plugins/claudias-garden
 ```
 
 **Symlinks belong in dev vaults only, never in your live vault.** If your vault is on iCloud or any other sync, the sync layer treats a symlink as a symlink, not as the resolved target. Every other machine paired to that vault will inherit a dead link. For live vaults always copy the build artefacts (`main.js`, `manifest.json`, `styles.css`) — the install matrix above does this correctly.

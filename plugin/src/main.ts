@@ -2,7 +2,7 @@ import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
 import { execSync } from "child_process";
 import * as fs from "fs";
 import { DEFAULT_SETTINGS, ClaudeForObsidianSettings, ClaudeForObsidianSettingTab } from "./settings";
-import { CLAUDE_FOR_OBSIDIAN_VIEW, ClaudeForObsidianView } from "./view";
+import { CLAUDIAS_GARDEN_VIEW, ClaudeForObsidianView } from "./view";
 
 const COMMON_CLAUDE_PATHS = [
   "/opt/homebrew/bin/claude",
@@ -19,30 +19,30 @@ export default class ClaudeForObsidianPlugin extends Plugin {
     await this.loadSettings();
     await this.ensureClaudeBinaryPath();
 
-    this.registerView(CLAUDE_FOR_OBSIDIAN_VIEW, (leaf: WorkspaceLeaf) => new ClaudeForObsidianView(leaf, this));
+    this.registerView(CLAUDIAS_GARDEN_VIEW, (leaf: WorkspaceLeaf) => new ClaudeForObsidianView(leaf, this));
 
-    this.addRibbonIcon("bot", "Open Claude for Obsidian", () => this.activateView());
+    this.addRibbonIcon("bot", "Open Claudia's Garden", () => this.activateView());
 
     this.addCommand({
-      id: "open-claude-for-obsidian",
-      name: "Open Claude for Obsidian panel",
+      id: "open-claudias-garden",
+      name: "Open Claudia's Garden panel",
       callback: () => this.activateView(),
     });
 
     this.addCommand({
-      id: "claude-for-obsidian-new-chat",
+      id: "claudias-garden-new-chat",
       name: "New chat",
       callback: () => this.withView((v) => v.newChat()),
     });
 
     this.addCommand({
-      id: "claude-for-obsidian-delete-current-chat",
+      id: "claudias-garden-delete-current-chat",
       name: "Delete current chat",
       callback: () => this.withView((v) => v.deleteCurrentChat()),
     });
 
     this.addCommand({
-      id: "claude-for-obsidian-save-chat",
+      id: "claudias-garden-save-chat",
       name: "Save chat to vault",
       callback: () => this.withView((v) => v.saveChatToVault()),
     });
@@ -51,10 +51,10 @@ export default class ClaudeForObsidianPlugin extends Plugin {
   }
 
   private withView(fn: (view: ClaudeForObsidianView) => void): void {
-    const leaves = this.app.workspace.getLeavesOfType(CLAUDE_FOR_OBSIDIAN_VIEW);
+    const leaves = this.app.workspace.getLeavesOfType(CLAUDIAS_GARDEN_VIEW);
     if (leaves.length === 0) {
       this.activateView().then(() => {
-        const after = this.app.workspace.getLeavesOfType(CLAUDE_FOR_OBSIDIAN_VIEW);
+        const after = this.app.workspace.getLeavesOfType(CLAUDIAS_GARDEN_VIEW);
         if (after.length > 0 && after[0].view instanceof ClaudeForObsidianView) {
           fn(after[0].view as ClaudeForObsidianView);
         }
@@ -97,7 +97,7 @@ export default class ClaudeForObsidianPlugin extends Plugin {
     }
 
     new Notice(
-      "Claude for Obsidian: could not find the claude CLI. Run `which claude` in a terminal and paste the result into Settings → Claude for Obsidian → Claude binary path.",
+      "Claudia's Garden: could not find the claude CLI. Run `which claude` in a terminal and paste the result into Settings → Claudia's Garden → Claude binary path.",
       10000,
     );
   }
@@ -129,14 +129,14 @@ export default class ClaudeForObsidianPlugin extends Plugin {
 
   async activateView(): Promise<void> {
     const { workspace } = this.app;
-    const existing = workspace.getLeavesOfType(CLAUDE_FOR_OBSIDIAN_VIEW);
+    const existing = workspace.getLeavesOfType(CLAUDIAS_GARDEN_VIEW);
     if (existing.length > 0) {
       workspace.revealLeaf(existing[0]);
       return;
     }
     const leaf = workspace.getRightLeaf(false);
     if (!leaf) return;
-    await leaf.setViewState({ type: CLAUDE_FOR_OBSIDIAN_VIEW, active: true });
+    await leaf.setViewState({ type: CLAUDIAS_GARDEN_VIEW, active: true });
     workspace.revealLeaf(leaf);
   }
 }

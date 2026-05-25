@@ -37,7 +37,7 @@ function relativeTime(ts: number): string {
   return `${y}y`;
 }
 
-export const CLAUDE_FOR_OBSIDIAN_VIEW = "claude-for-obsidian-view";
+export const CLAUDIAS_GARDEN_VIEW = "claudias-garden-view";
 
 interface ToolGroup {
   el: HTMLElement;
@@ -585,11 +585,11 @@ export class ClaudeForObsidianView extends ItemView {
   }
 
   getViewType(): string {
-    return CLAUDE_FOR_OBSIDIAN_VIEW;
+    return CLAUDIAS_GARDEN_VIEW;
   }
 
   getDisplayText(): string {
-    return "Claude for Obsidian";
+    return "Claudia's Garden";
   }
 
   getIcon(): string {
@@ -599,7 +599,7 @@ export class ClaudeForObsidianView extends ItemView {
   async onOpen(): Promise<void> {
     const root = this.containerEl.children[1];
     root.empty();
-    root.addClass("claude-for-obsidian-view");
+    root.addClass("claudias-garden-view");
 
     const headerRow = root.createDiv({ cls: "cfo-header-row" });
     this.chatTitleEl = headerRow.createEl("button", { cls: "cfo-chat-title-tab" });
@@ -1849,7 +1849,7 @@ export class ClaudeForObsidianView extends ItemView {
       a.addEventListener("mouseover", (evt) => {
         this.app.workspace.trigger("hover-link", {
           event: evt,
-          source: "claude-for-obsidian",
+          source: "claudias-garden",
           hoverParent: this.renderComponent,
           targetEl: a,
           linktext: linkText,
@@ -2597,7 +2597,7 @@ export class ClaudeForObsidianView extends ItemView {
 
     const cwd = this.resolveCwd();
     if (!cwd) {
-      new Notice("Claude for Obsidian: could not resolve vault path.");
+      new Notice("Claudia's Garden: could not resolve vault path.");
       this.statusEl.setText("Error: no vault path.");
       return;
     }
@@ -3351,7 +3351,7 @@ export class ClaudeForObsidianView extends ItemView {
         this.lastStderr = e.line;
         break;
       case "error":
-        new Notice(`Claude for Obsidian: ${e.message}`);
+        new Notice(`Claudia's Garden: ${e.message}`);
         this.clearStatus();
         this.statusEl.setText(`Error: ${e.message}`);
         break;
@@ -3374,7 +3374,7 @@ export class ClaudeForObsidianView extends ItemView {
         this.setBusy(false);
         if (e.code !== 0 && e.code !== null && !hadOutput) {
           const detail = this.lastStderr ? ` ${this.lastStderr.slice(0, 200)}` : "";
-          new Notice(`Claude for Obsidian exited (${e.code}).${detail}`);
+          new Notice(`Claudia's Garden exited (${e.code}).${detail}`);
         }
         this.lastStderr = null;
         break;

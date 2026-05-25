@@ -1,9 +1,9 @@
 {
-  "id": "claude-for-obsidian",
-  "name": "Claude for Obsidian",
+  "id": "claudias-garden",
+  "name": "Claudia's Garden",
   "version": "0.9.0",
   "minAppVersion": "1.5.0",
-  "description": "Drive the Claude Code CLI from inside Obsidian. Unofficial.",
+  "description": "A Claudia surface for Obsidian. Drives the Claude Code CLI as a subprocess so chats live inside the vault graph. Unofficial; not affiliated with Anthropic.",
   "author": "Emrah",
   "isDesktopOnly": true
 }

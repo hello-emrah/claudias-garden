@@ -161,7 +161,7 @@ export class ClaudeSession {
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
               permissionDecision: "allow",
-              permissionDecisionReason: "User approved via Claude for Obsidian",
+              permissionDecisionReason: "User approved via Claudia's Garden",
               updatedInput: decision.updatedInput,
             },
           }
@@ -170,7 +170,7 @@ export class ClaudeSession {
             hookSpecificOutput: {
               hookEventName: "PreToolUse",
               permissionDecision: "deny",
-              permissionDecisionReason: decision.message ?? "User denied via Claude for Obsidian",
+              permissionDecisionReason: decision.message ?? "User denied via Claudia's Garden",
             },
           };
     this.writeStdin({
