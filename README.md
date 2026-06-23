@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://buymeacoffee.com/hello_emrah"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-c46b44?logo=buymeacoffee&logoColor=ffffff&style=for-the-badge" alt="Buy Me a Coffee" /></a>
+  <a href="https://www.buymeacoffee.com/hello_emrah"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=hello_emrah&button_colour=E15E52&font_colour=ffffff&coffee_colour=ffffff&outline_colour=ffffff&font_family=Inter" alt="Buy me a coffee" height="44" /></a>
 </p>
 
 ---
@@ -238,7 +238,7 @@ ln -s "$(pwd)/plugin" /path/to/dev-vault/.obsidian/plugins/claudias-garden
 
 **Symlinks belong in dev vaults only, never in your live vault.** If your vault is on iCloud or any other sync, the sync layer treats a symlink as a symlink, not as the resolved target. Every other machine paired to that vault will inherit a dead link. For live vaults always copy the build artefacts (`main.js`, `manifest.json`, `styles.css`) — the install matrix above does this correctly.
 
-## Licence
+## License
 
 MIT. See [LICENSE](LICENSE).
 
