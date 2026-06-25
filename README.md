@@ -238,6 +238,16 @@ ln -s "$(pwd)/plugin" /path/to/dev-vault/.obsidian/plugins/claudias-garden
 
 **Symlinks belong in dev vaults only, never in your live vault.** If your vault is on iCloud or any other sync, the sync layer treats a symlink as a symlink, not as the resolved target. Every other machine paired to that vault will inherit a dead link. For live vaults always copy the build artefacts (`main.js`, `manifest.json`, `styles.css`) — the install matrix above does this correctly.
 
+## Why "Claudia's Garden"
+
+The vault is the garden. Notes are planted, they grow, they link to one another and root into something living that you tend over time rather than file away. Claudia is the assistant who comes to live in that garden, not the one who visits from a sidebar and leaves when you close the tab. The name says where she works: inside the graph, in the soil, part of the place.
+
+## Design philosophy
+
+The visual mark and the tool itself were built deliberately against the visual language of capitalist software design. No gradients, no neon, no glass, no drop shadows, no isometric stock illustration. Single-shade flat seals in warm, considered colours, ancient-glyph silhouettes, generous whitespace. The mark could be pressed into wax or carved into stone.
+
+This tool is built for personal use and shared openly. It is not productised, monetised, or instrumented. Use it for your own work or fork it for yours.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
